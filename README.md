@@ -23,6 +23,8 @@ without leaving whatever you were doing.
   your playlists and plays the chosen one directly.
 - **Clear feedback** — a small glass toast confirms what's playing or explains
   an error (not in your library, missing Automation permission).
+- **Self-updating** — checks GitHub on launch; when a signed release is newer it
+  can download, verify and relaunch into it (`update`).
 - **Apple Music catalog fallback** — when a song isn't in your library, Cuebar
   still finds it and says so, instead of silently playing the wrong track.
 - **Typo tolerant** — `blinding lites` still finds *Blinding Lights*.

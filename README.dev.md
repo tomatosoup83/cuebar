@@ -198,6 +198,28 @@ still toggles play/pause, and the footer then reads **"⏎ play/pause"**.
 - Card controls don't close the palette; Return on an ordinary command row still
   does.
 
+## Updates
+
+Cuebar checks GitHub for a newer release — automatically on launch (when
+enabled) and on demand via the `update` command or **Settings → Software Update**.
+
+- `UpdateChecker` reads `repos/tomatosoup83/cuebar/releases/latest` and compares
+  the tag with `AppVersion.current()`.
+- When newer, a toast fires and an **"Install Update (x.y.z)"** command row is
+  injected; Return, or the Settings *Install* button, downloads `Cuebar.zip`.
+- `ReleaseVerifier` checks the download against the **Ed25519** public key baked
+  into `ReleaseVerifier.UpdateKey`, using the `Cuebar.zip.sig` asset. Unsigned or
+  mismatched archives are refused.
+- `UpdateController` then runs `SwapScript` detached: it waits for Cuebar to
+  quit, swaps the bundle (with a backup + rollback on failure), strips
+  `com.apple.quarantine`, and relaunches.
+
+**Releasing:** `Scripts/release.sh <version>` bumps the version, builds, packages
+`Cuebar.zip`, signs it to `Cuebar.zip.sig`, commits/pushes and creates the GitHub
+release. One-time setup: `Scripts/make-update-key.sh` generates the key pair and
+prints the public key to paste into `UpdateKey.publicKeyBase64` (keep the private
+key secret).
+
 ## Feedback (toasts)
 
 Playback outcomes are reported by a small borderless `ToastPanel` (click-through,
@@ -264,6 +286,13 @@ Sources/CuebarCore/          # testable, no UI
   PlaybackFeedback.swift     # toast copy for playback outcomes
   ToastCenter.swift          # current toast + auto-dismiss (injectable timing)
   NowPlayingProgress.swift   # interpolated progress position between polls
+  AppVersion.swift           # semver parse + compare
+  UpdateInfo.swift           # release model + check result
+  UpdateChecker.swift        # GitHub releases/latest client
+  ReleaseVerifier.swift      # Ed25519 verification + embedded public key
+  SwapScript.swift           # pure builder for the bundle swap script
+  UpdatePreferenceStore.swift# auto-check flag (UserDefaults)
+  UpdateFeedback.swift       # update toasts
   OnboardingStore.swift      # first-run completion flag (UserDefaults)
   Command.swift              # Command + CommandParser
   CommandCatalog.swift       # command entries + typed matching
@@ -291,6 +320,7 @@ Sources/Cuebar/              # AppKit/SwiftUI shell
   PaletteView.swift          # Liquid Glass container
   ResultRowView.swift
   NowPlayingCardView.swift   # large now-playing card (progress + controls)
+  UpdateController.swift     # check / download / verify / swap / relaunch
   SearchScopeChip.swift      # in-field album/playlist scope chip
   OnboardingView.swift       # first-run wizard
   ArtworkView.swift          # rounded album-art tile
@@ -334,15 +364,16 @@ not captured, but layout, rows and text are.
 
 ## Tests
 
-`make test` runs 163 unit tests covering command parsing, command matching
+`make test` runs 178 unit tests covering command parsing, command matching
 (including that `play take on me` matches no command), now-playing parsing
 (incl. shuffle/repeat) and progress interpolation, list composition, artwork
 cache keys/persistence, the launch-hotkey preference (formatting, validation,
 persistence), the onboarding flag and Automation permission mapping,
-catalog-to-library resolution (never substituting a same-title track by a
-different artist), album grouping/ordering, scope browse lists, the
-`album`/`playlist` scope keywords, library parsing (album artist/disc/track and
-playlists), repeat modes, toast copy and auto-dismissal, ranking (the
-exact-song-over-album rule, library preference, typo tolerance, album/playlist
-preference and deterministic ordering), command execution and the
-library-first/catalog-fallback search flow.
+version parsing/comparison, the GitHub update check + Ed25519 verification +
+swap script + update preference, catalog-to-library resolution (never
+substituting a same-title track by a different artist), album grouping/ordering,
+scope browse lists, the `album`/`playlist` scope keywords, library parsing
+(album artist/disc/track and playlists), repeat modes, toast copy and
+auto-dismissal, ranking (the exact-song-over-album rule, library preference,
+typo tolerance, album/playlist preference and deterministic ordering), command
+execution and the library-first/catalog-fallback search flow.

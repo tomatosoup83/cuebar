@@ -33,6 +33,10 @@ final class PaletteWindowController {
     var onOnboardingComplete: (() -> Void)?
     /// Opens System Settings › Privacy & Security › Automation.
     var onOpenAutomationSettings: (() -> Void)?
+    /// Checks GitHub for a newer release.
+    var onCheckForUpdates: (() -> Void)?
+    /// Downloads and installs the available update.
+    var onInstallUpdate: (() -> Void)?
 
     init(
         searchService: SearchService,
@@ -90,6 +94,12 @@ final class PaletteWindowController {
         model.onOpenAutomationSettings = { [weak self] in
             self?.onOpenAutomationSettings?()
         }
+        model.onCheckForUpdates = { [weak self] in
+            self?.onCheckForUpdates?()
+        }
+        model.onInstallUpdate = { [weak self] in
+            self?.onInstallUpdate?()
+        }
 
         installKeyMonitor()
         observeResignKey()
@@ -134,6 +144,16 @@ final class PaletteWindowController {
     func showOnboarding() {
         show()
         model.startOnboarding()
+    }
+
+    /// Shows a toast from outside the model (e.g. the update controller).
+    func presentToast(_ toast: Toast) {
+        toastController.show(toast, anchoredTo: panel.isVisible ? panel.frame : nil)
+    }
+
+    /// Reflects update availability in the palette.
+    func setAvailableUpdate(_ update: UpdateInfo?) {
+        model.setAvailableUpdate(update)
     }
 
     func hide() {

@@ -8,6 +8,8 @@ public enum PaletteAction: Equatable, Sendable {
     case openSettings
     /// Re-scan the Music library index.
     case rebuildLibraryIndex
+    /// Download and install an available update.
+    case installUpdate
 }
 
 /// A user-facing row that is not a song: a command or an app action.
@@ -19,6 +21,10 @@ public struct CommandEntry: Identifiable, Equatable, Sendable {
     public let action: PaletteAction
     /// Words the user can type (or partially type) to surface this entry.
     public let keywords: [String]
+    /// Whether the entry is listed when the search box is empty. Entries that
+    /// are replaced by the now-playing card (pause/resume) hide by default but
+    /// still match when typed.
+    public let showsByDefault: Bool
 
     public init(
         id: String,
@@ -26,7 +32,8 @@ public struct CommandEntry: Identifiable, Equatable, Sendable {
         subtitle: String,
         symbolName: String,
         action: PaletteAction,
-        keywords: [String]
+        keywords: [String],
+        showsByDefault: Bool = true
     ) {
         self.id = id
         self.title = title
@@ -34,6 +41,7 @@ public struct CommandEntry: Identifiable, Equatable, Sendable {
         self.symbolName = symbolName
         self.action = action
         self.keywords = keywords
+        self.showsByDefault = showsByDefault
     }
 }
 
@@ -47,7 +55,8 @@ public enum CommandCatalog {
             subtitle: "Pause playback",
             symbolName: "pause.fill",
             action: .music(.pause),
-            keywords: ["pause"]
+            keywords: ["pause"],
+            showsByDefault: false
         ),
         CommandEntry(
             id: "resume",
@@ -55,7 +64,8 @@ public enum CommandCatalog {
             subtitle: "Resume playback",
             symbolName: "play.fill",
             action: .music(.resume),
-            keywords: ["resume", "play"]
+            keywords: ["resume", "play"],
+            showsByDefault: false
         ),
         CommandEntry(
             id: "next",
@@ -147,7 +157,7 @@ public enum CommandCatalog {
     public static func matches(for input: String, limit: Int = 20) -> [CommandEntry] {
         let normalized = TextNormalizer.normalize(input)
         guard !normalized.isEmpty else {
-            return Array(all.prefix(limit))
+            return Array(all.filter(\.showsByDefault).prefix(limit))
         }
 
         let scored: [(entry: CommandEntry, score: Double)] = all.compactMap { entry in

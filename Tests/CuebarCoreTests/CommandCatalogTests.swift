@@ -2,10 +2,17 @@ import XCTest
 @testable import CuebarCore
 
 final class CommandCatalogTests: XCTestCase {
-    func testEmptyInputReturnsEveryCommand() {
+    func testEmptyInputReturnsDefaultCommands() {
         let matches = CommandCatalog.matches(for: "")
-        XCTAssertEqual(matches.count, CommandCatalog.all.count)
-        XCTAssertEqual(Set(matches.map(\.id)), Set(CommandCatalog.all.map(\.id)))
+        let ids = Set(matches.map(\.id))
+        XCTAssertEqual(matches.count, CommandCatalog.all.filter(\.showsByDefault).count)
+        XCTAssertFalse(ids.contains("pause"), "Pause is replaced by the now-playing card")
+        XCTAssertFalse(ids.contains("resume"), "Play/Resume is replaced by the now-playing card")
+    }
+
+    func testPauseAndResumeStillMatchWhenTyped() {
+        XCTAssertEqual(CommandCatalog.matches(for: "pause").first?.id, "pause")
+        XCTAssertEqual(CommandCatalog.matches(for: "resume").first?.id, "resume")
     }
 
     func testExactKeywordWins() {

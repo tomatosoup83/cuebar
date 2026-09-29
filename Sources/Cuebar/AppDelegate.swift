@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import CuebarCore
 
 /// Owns the long-lived app services: hotkey, status item, palette and the
@@ -11,6 +12,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let hotKeyManager = HotKeyManager()
     private let hotKeyStore = HotKeyStore()
     private let onboardingStore = OnboardingStore()
+    private let updateController = UpdateController()
+    private var cancellables = Set<AnyCancellable>()
     private let libraryProvider = LibrarySearchProvider()
     private let indexStore = LibraryIndexStore()
     private let libraryFetcher = AppleScriptLibraryProvider()
@@ -46,6 +49,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 NSWorkspace.shared.open(url)
             }
         }
+        controller.onCheckForUpdates = { [weak self] in
+            self?.updateController.check()
+        }
+        controller.onInstallUpdate = { [weak self] in
+            self?.updateController.install()
+        }
+        updateController.onToast = { [weak self] toast in
+            self?.paletteController?.presentToast(toast)
+        }
+        updateController.$availableUpdate
+            .sink { [weak self] update in
+                self?.paletteController?.setAvailableUpdate(update)
+            }
+            .store(in: &cancellables)
         paletteController = controller
 
         hotKeyManager.onHotKey = { [weak self] in self?.paletteController?.toggle() }
@@ -61,6 +78,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
                 self?.paletteController?.showOnboarding()
             }
+        }
+
+        // Quiet update check a few seconds in (only when enabled).
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+            self?.updateController.checkIfEnabled()
         }
 
 #if DEBUG

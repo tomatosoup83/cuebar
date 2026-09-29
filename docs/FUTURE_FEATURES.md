@@ -38,8 +38,8 @@ actually verified about `Music.app`:
   transport menu (play/pause/next/previous).
 - **Sleep timer** — `stop in 30m` (timer + pause).
 - **Lyrics** — `lyrics` shows the current track's lyrics (`lyrics` property).
-- **Update checker** — query the GitHub releases API on launch and toast
-  "v0.3.0 available"; Cuebar now publishes releases.
+- **Update checker** — ~~query the GitHub releases API~~ **done** (plan15:
+  check, notify, and self-install signed releases).
 - **Full VoiceOver pass** — beyond the toast announcement.
 
 ## Repo / process

@@ -40,6 +40,9 @@ final class PaletteModel: ObservableObject {
     @Published private(set) var onboardingStep: OnboardingStep = .welcome
     @Published private(set) var automationGranted: Bool?
 
+    // Updates
+    @Published private(set) var availableUpdate: UpdateInfo?
+
     var onClose: (() -> Void)?
     /// Reports playback outcomes as toasts.
     var onToast: ((Toast) -> Void)?
@@ -49,6 +52,10 @@ final class PaletteModel: ObservableObject {
     var onOnboardingComplete: (() -> Void)?
     /// Opens the Automation section of System Settings.
     var onOpenAutomationSettings: (() -> Void)?
+    /// Checks GitHub for a newer release.
+    var onCheckForUpdates: (() -> Void)?
+    /// Downloads and installs the available update.
+    var onInstallUpdate: (() -> Void)?
     /// Applies a new hotkey; returns false when the shortcut is unavailable.
     var onHotKeyChange: ((HotKeyPreference) -> Bool)?
 
@@ -148,7 +155,7 @@ final class PaletteModel: ObservableObject {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
 
         // A scope is music-only, so command rows are suppressed.
-        commands = scope == nil ? CommandCatalog.matches(for: trimmed) : []
+        commands = scope == nil ? commandEntries(for: trimmed) : []
 
         // Songs: only for `play <song>` or free text. A recognised non-play
         // command shows just the command. An empty scope browses that kind.
@@ -175,6 +182,51 @@ final class PaletteModel: ObservableObject {
         guard scope != nil else { return }
         scope = nil
         queryChanged()
+    }
+
+    // MARK: - Updates
+
+    /// The running version, for Settings.
+    var currentVersionText: String {
+        AppVersion.current()?.description ?? "—"
+    }
+
+    func setAvailableUpdate(_ update: UpdateInfo?) {
+        guard update != availableUpdate else { return }
+        availableUpdate = update
+        queryChanged()
+    }
+
+    func checkForUpdates() {
+        onCheckForUpdates?()
+    }
+
+    func installUpdate() {
+        onInstallUpdate?()
+    }
+
+    /// Catalog commands, with an "Install Update" row injected when one exists.
+    private func commandEntries(for trimmed: String) -> [CommandEntry] {
+        var entries = CommandCatalog.matches(for: trimmed)
+        guard let update = availableUpdate else { return entries }
+
+        let entry = Self.installEntry(update)
+        let normalized = TextNormalizer.normalize(trimmed)
+        if normalized.isEmpty || CommandCatalog.score(entry, normalizedInput: normalized) != nil {
+            entries.insert(entry, at: 0)
+        }
+        return entries
+    }
+
+    private static func installEntry(_ update: UpdateInfo) -> CommandEntry {
+        CommandEntry(
+            id: "installUpdate",
+            title: "Install Update (\(update.version))",
+            subtitle: "Download and relaunch Cuebar",
+            symbolName: "arrow.down.circle",
+            action: .installUpdate,
+            keywords: ["update", "install update", "upgrade"]
+        )
     }
 
     /// Refresh the current track from Music.app.
@@ -453,6 +505,8 @@ final class PaletteModel: ObservableObject {
             openSettings()
         case .rebuildLibraryIndex:
             rebuildLibraryIndex()
+        case .installUpdate:
+            installUpdate()
         case .music(let command):
             statusMessage = nil
             Task {

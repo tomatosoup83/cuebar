@@ -12,6 +12,7 @@ struct SettingsView: View {
             ScrollView {
                 VStack(spacing: 2) {
                     hotKeyRow
+                    updateRow
                     onboardingRow
                 }
                 .padding(.horizontal, 10)
@@ -103,8 +104,54 @@ struct SettingsView: View {
         .padding(.vertical, 8)
     }
 
-    private var onboardingRow: some View {
+    private var updateRow: some View {
         HStack(spacing: 12) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 7).fill(.quaternary)
+                Image(systemName: "arrow.down.circle")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Color(nsColor: .secondaryLabelColor))
+            }
+            .frame(width: 36, height: 36)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Software Update")
+                    .font(.system(size: 15, weight: .medium))
+                if let update = model.availableUpdate {
+                    Text("Version \(update.version) is available")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Color.accentColor)
+                } else {
+                    Text("Cuebar \(model.currentVersionText)")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Spacer(minLength: 8)
+
+            if model.availableUpdate != nil {
+                Button("Install") { model.installUpdate() }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12, weight: .medium))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(
+                        Color.accentColor.opacity(0.18),
+                        in: RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    )
+            }
+
+            Button("Check") { model.checkForUpdates() }
+                .buttonStyle(.plain)
+                .font(.system(size: 12))
+                .foregroundStyle(Color(nsColor: .secondaryLabelColor))
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+    }
+
+    private var onboardingRow: some View {        HStack(spacing: 12) {
             ZStack {
                 RoundedRectangle(cornerRadius: 7).fill(.quaternary)
                 Image(systemName: "sparkles")
