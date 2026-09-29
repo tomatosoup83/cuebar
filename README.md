@@ -16,10 +16,18 @@ without leaving whatever you were doing.
 
 ## Features
 
-- **Play anything by name** — your library first, the Apple Music catalog as a
-  fallback.
+- **Play anything in your library by name** — instant, fuzzy and offline.
+- **Play a library album start to finish** — search the album (`after hours
+  album`), Return loads its tracks in order with shuffle off.
+- **Play a library playlist** — `playlist focus` (or `focus playlist`) searches
+  your playlists and plays the chosen one directly.
+- **Clear feedback** — a small glass toast confirms what's playing or explains
+  an error (not in your library, missing Automation permission).
+- **Apple Music catalog fallback** — when a song isn't in your library, Cuebar
+  still finds it and says so, instead of silently playing the wrong track.
 - **Typo tolerant** — `blinding lites` still finds *Blinding Lights*.
-- **Transport commands** — `pause`, `resume`, `next`, `previous`, `shuffle`.
+- **Transport commands** — `pause`, `resume`, `next`, `previous`, `shuffle`,
+  `repeat`.
 - **Now playing** — the current track shows up at the top with an animated
   equalizer; **Return** toggles playback.
 - **Album artwork**, cached on disk so it appears instantly, even offline.
@@ -52,15 +60,24 @@ Press **⌘⌥Space** from anywhere, then type:
 
 | Input | What happens |
 |---|---|
-| `take on me` | Plays the best match |
+| `take on me` | Plays the best match (the song, if one shares the name) |
+| `take on me album` | Prioritises the matching **album**; plays it start to finish |
+| `focus playlist` · `playlist focus` | Prioritises your **playlists**; plays the chosen one |
 | `play take on me` | The same, explicit |
 | `pause` / `resume` | Pause / resume playback |
 | `next` / `previous` | Skip tracks |
 | `shuffle` · `shuffle on` · `shuffle off` | Toggle or set shuffle |
+| `repeat queue` · `repeat track` · `repeat off` | Repeat the queue, the track, or nothing |
+| `rebuild` · `reindex` | Re-scan your Music library and toast the result |
 | `settings` | Open Cuebar's settings |
 
+Typing `album` or `playlist` plus a space turns it into a scope chip in the
+search box (e.g. `[ Playlist › ]`) — the field then searches only that term in
+scope. **⌫** on an empty field, **Esc**, or clicking the chip clears it.
+
 `↑` / `↓` move through results, `Return` runs the selected row, `Esc` closes the
-palette.
+palette. The search field supports the usual editing shortcuts (`⌘A`, `⌘C`,
+`⌘V`, `⌘X`, `⌘Z`).
 
 ## Settings
 
@@ -79,9 +96,26 @@ Settings live **inside the same panel** — open them with **⌘,** or by typing
 - Your library is indexed once at launch through AppleScript and cached to disk,
   so searching is instant and works offline.
 - Results are ranked deterministically: exact titles first, library before
-  catalog, songs before albums, with fuzzy matching for typos.
+  catalog, songs before albums, with fuzzy matching for typos. Ending the query
+  with `album` (or `playlist`) flips that — the chosen kind first — and the
+  keyword isn't searched.
+- Library albums are grouped from their tracks (album + album artist, ordered by
+  disc then track). Playing one loads a reusable **Cuebar Queue** playlist in
+  Music with shuffle off, so it runs start to finish.
+- Library playlists are indexed too (by persistent ID, so duplicate names are
+  safe) and played directly; shuffle is left as-is. Cuebar's own queue playlist
+  and Music's system playlists are excluded.
+- Catalog results that also exist in your library are played from the library.
+  A catalog item is only mapped onto a library track when the **title and
+  artist** agree; a same-title track by a different artist is never substituted.
+  Songs that exist **only** in Apple Music are shown with a note rather than
+  played, because macOS gives third-party apps no supported way to start catalog
+  playback without a MusicKit entitlement (see below).
 - Playback is driven by AppleScript, so transport controls affect the real,
   system-wide Music player.
+- Outcomes are reported by a small borderless **toast** anchored below the
+  palette: playback/transport confirmations and errors (including the Automation
+  permission guidance), announced to VoiceOver and dismissed automatically.
 
 ### Why AppleScript instead of MusicKit?
 

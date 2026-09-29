@@ -7,6 +7,13 @@ public enum ShuffleAction: Equatable, Sendable {
     case off
 }
 
+/// Music's playback repeat mode (`song repeat`).
+public enum RepeatMode: String, Equatable, Sendable {
+    case off
+    case all
+    case one
+}
+
 /// A parsed palette command.
 public enum Command: Equatable, Sendable {
     case play(query: String)
@@ -15,12 +22,14 @@ public enum Command: Equatable, Sendable {
     case next
     case previous
     case shuffle(ShuffleAction)
+    case setRepeat(RepeatMode)
 }
 
 /// Turns raw palette input into a `Command`.
 ///
-/// Recognized verbs are `play`, `pause`, `resume`, `next`, `previous`, `shuffle`.
-/// Anything else is treated as a bare song name, i.e. an implicit `play`.
+/// Recognized verbs are `play`, `pause`, `resume`, `next`, `previous`,
+/// `shuffle` and `repeat`. Anything else is treated as a bare song name, i.e.
+/// an implicit `play`.
 public enum CommandParser {
     public static func parse(_ input: String) -> Command? {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -50,6 +59,13 @@ public enum CommandParser {
             case "on", "yes", "true": return .shuffle(.on)
             case "off", "no", "false": return .shuffle(.off)
             default: return .shuffle(.toggle)
+            }
+        case "repeat":
+            switch rest.lowercased() {
+            case "queue", "all", "playlist": return .setRepeat(.all)
+            case "track", "song", "one": return .setRepeat(.one)
+            case "off", "none": return .setRepeat(.off)
+            default: return nil
             }
         default:
             return .play(query: trimmed)

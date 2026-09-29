@@ -8,8 +8,18 @@ import CuebarCore
 final class PaletteWindowController {
     static var panelSize: NSSize { PaletteMetrics.panelSize }
 
+    /// Standard editing selectors, forwarded by the key monitor because an
+    /// agent app has no Edit menu to dispatch them.
+    private static let editingSelectors: [String: String] = [
+        "a": "selectAll:",
+        "c": "copy:",
+        "v": "paste:",
+        "x": "cut:"
+    ]
+
     private let panel: PalettePanel
     private let model: PaletteModel
+    private let toastController: ToastWindowController
     private var keyMonitor: Any?
     private weak var previousApplication: NSRunningApplication?
     private var isHiding = false
@@ -17,20 +27,25 @@ final class PaletteWindowController {
 
     /// Applies a new hotkey; returns false when the shortcut is unavailable.
     var onHotKeyChange: ((HotKeyPreference) -> Bool)?
+    /// Rebuilds the library index; returns counts, or nil on failure.
+    var onRebuildLibraryIndex: (() async -> LibraryIndexSummary?)?
 
     init(
         searchService: SearchService,
         musicController: MusicController,
+        libraryProvider: LibrarySearchProvider,
         hotKey: HotKeyPreference = .default
     ) {
         model = PaletteModel(
             searchService: searchService,
             musicController: musicController,
+            libraryProvider: libraryProvider,
             hotKey: hotKey
         )
 
         let rect = NSRect(origin: .zero, size: PaletteMetrics.panelSize)
         panel = PalettePanel(contentRect: rect)
+        toastController = ToastWindowController(center: ToastCenter())
 
         // A borderless window is square. Round the content container itself so
         // the window silhouette (and its shadow) match the glass shape instead
@@ -55,8 +70,15 @@ final class PaletteWindowController {
         panel.setContentSize(PaletteMetrics.panelSize)
 
         model.onClose = { [weak self] in self?.hide() }
+        model.onToast = { [weak self] toast in
+            guard let self else { return }
+            self.toastController.show(toast, anchoredTo: self.panel.frame)
+        }
         model.onHotKeyChange = { [weak self] preference in
             self?.onHotKeyChange?(preference) ?? false
+        }
+        model.onRebuildLibraryIndex = { [weak self] in
+            await self?.onRebuildLibraryIndex?()
         }
 
         installKeyMonitor()
@@ -224,6 +246,31 @@ final class PaletteWindowController {
                 return nil
             }
 
+            // Standard editing shortcuts. An agent app has no Edit menu, so
+            // AppKit never dispatches these; forward them to the field editor.
+            if event.modifierFlags.contains(.command),
+               let key = event.charactersIgnoringModifiers?.lowercased() {
+                if let action = Self.editingSelectors[key],
+                   NSApp.sendAction(NSSelectorFromString(action), to: nil, from: nil) {
+                    return nil
+                }
+                if key == "z" {
+                    if event.modifierFlags.contains(.shift) {
+                        self.panel.undoManager?.redo()
+                    } else {
+                        self.panel.undoManager?.undo()
+                    }
+                    return nil
+                }
+            }
+
+            // Backspace on an empty field clears an active scope chip.
+            if self.model.scope != nil, self.model.query.isEmpty,
+               Int(event.keyCode) == kVK_Delete || Int(event.keyCode) == kVK_ForwardDelete {
+                self.model.clearScope()
+                return nil
+            }
+
             switch Int(event.keyCode) {
             case kVK_DownArrow:
                 self.model.moveSelection(by: 1)
@@ -235,7 +282,11 @@ final class PaletteWindowController {
                 self.model.executeSelection()
                 return nil
             case kVK_Escape:
-                self.hide()
+                if self.model.scope != nil {
+                    self.model.clearScope()
+                } else {
+                    self.hide()
+                }
                 return nil
             default:
                 return event

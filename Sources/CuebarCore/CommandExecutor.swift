@@ -44,6 +44,18 @@ public final class CommandExecutor: Sendable {
             case .on: try await controller.setShuffle(true)
             case .off: try await controller.setShuffle(false)
             }
+        case .setRepeat(let mode):
+            try await controller.setRepeat(mode)
         }
+    }
+
+    /// Plays a library album's tracks start to finish.
+    public func executeAlbum(_ tracks: [MusicCandidate]) async throws {
+        try await controller.playAlbum(tracks)
+    }
+
+    /// Plays a library playlist directly.
+    public func executePlaylist(_ playlist: MusicCandidate) async throws {
+        try await controller.playPlaylist(playlist)
     }
 }

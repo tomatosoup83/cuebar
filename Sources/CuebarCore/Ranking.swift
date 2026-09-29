@@ -1,5 +1,12 @@
 import Foundation
 
+/// Which kind of result a query asked to prioritise (`… album`, `… playlist`).
+public enum RankPreference: Equatable, Sendable {
+    case songs
+    case albums
+    case playlists
+}
+
 /// Deterministic scoring and ordering for search results.
 ///
 /// Design rules (see plan.md):
@@ -28,21 +35,23 @@ public enum Ranking {
     private static let artistBonus: Double = 150
     private static let albumBonus: Double = 30
 
-    /// Bonus/penalty that guarantees song > album > artist for equal base matches.
-    private static func kindBonus(_ kind: MusicKind) -> Double {
-        switch kind {
-        case .song: return 200
-        case .album: return 0
-        case .artist: return -100
+    /// Orders kinds, putting the preferred kind first. `artist` is always last.
+    private static func kindOrder(_ preference: RankPreference) -> [MusicKind] {
+        switch preference {
+        case .songs: return [.song, .album, .playlist, .artist]
+        case .albums: return [.album, .song, .playlist, .artist]
+        case .playlists: return [.playlist, .song, .album, .artist]
         }
     }
 
-    public static func kindRank(_ kind: MusicKind) -> Int {
-        switch kind {
-        case .song: return 0
-        case .album: return 1
-        case .artist: return 2
-        }
+    /// Bonus/penalty that orders kinds; the preferred kind leads.
+    private static func kindBonus(_ kind: MusicKind, preference: RankPreference) -> Double {
+        if kind == .artist { return -100 }
+        return kindOrder(preference).first == kind ? 200 : 0
+    }
+
+    public static func kindRank(_ kind: MusicKind, preference: RankPreference = .songs) -> Int {
+        kindOrder(preference).firstIndex(of: kind) ?? 99
     }
 
     public static func sourceRank(_ source: MusicSource) -> Int {
@@ -50,9 +59,14 @@ public enum Ranking {
     }
 
     /// Ranks `candidates` against `query`, returning the best `limit` results.
+    ///
+    /// When `preference` is `.albums` or `.playlists` (the user typed `… album` /
+    /// `… playlist`), that kind sorts above same-scoring results; otherwise songs
+    /// lead. Base scoring and the library preference are unchanged either way.
     public static func rank(
         _ candidates: [MusicCandidate],
         query: String,
+        preference: RankPreference = .songs,
         limit: Int = 40
     ) -> [MusicCandidate] {
         let normalizedQuery = TextNormalizer.normalize(query)
@@ -65,7 +79,12 @@ public enum Ranking {
         scored.reserveCapacity(candidates.count)
 
         for candidate in candidates {
-            let score = score(candidate, normalizedQuery: normalizedQuery, queryTokens: queryTokens)
+            let score = score(
+                candidate,
+                normalizedQuery: normalizedQuery,
+                queryTokens: queryTokens,
+                preference: preference
+            )
             if score > 0 {
                 scored.append((candidate, score))
             }
@@ -74,8 +93,8 @@ public enum Ranking {
         scored.sort { lhs, rhs in
             if lhs.score != rhs.score { return lhs.score > rhs.score }
 
-            let lhsKind = kindRank(lhs.candidate.kind)
-            let rhsKind = kindRank(rhs.candidate.kind)
+            let lhsKind = kindRank(lhs.candidate.kind, preference: preference)
+            let rhsKind = kindRank(rhs.candidate.kind, preference: preference)
             if lhsKind != rhsKind { return lhsKind < rhsKind }
 
             let lhsSource = sourceRank(lhs.candidate.source)
@@ -95,9 +114,15 @@ public enum Ranking {
     public static func score(
         _ candidate: MusicCandidate,
         normalizedQuery query: String,
-        queryTokens: [String]
+        queryTokens: [String],
+        preference: RankPreference = .songs
     ) -> Double {
-        evaluate(candidate, normalizedQuery: query, queryTokens: queryTokens).total
+        evaluate(
+            candidate,
+            normalizedQuery: query,
+            queryTokens: queryTokens,
+            preference: preference
+        ).total
     }
 
     /// The match strength before type/source bonuses are applied.
@@ -123,7 +148,8 @@ public enum Ranking {
     private static func evaluate(
         _ candidate: MusicCandidate,
         normalizedQuery query: String,
-        queryTokens: [String]
+        queryTokens: [String],
+        preference: RankPreference = .songs
     ) -> (base: Double, total: Double) {
         let title = candidate.normalizedTitle
         var base: Double = 0
@@ -158,7 +184,7 @@ public enum Ranking {
 
         guard base > 0 else { return (0, 0) }
 
-        var total = base + kindBonus(candidate.kind)
+        var total = base + kindBonus(candidate.kind, preference: preference)
         if candidate.source == .library { total += libraryBonus }
 
         let artist = candidate.normalizedArtist

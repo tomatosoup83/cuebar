@@ -9,6 +9,8 @@ play take on me     → finds and plays the song
 pause / resume
 next / previous
 shuffle [on|off]
+repeat [queue|track|off]
+rebuild library index
 ```
 
 Bare text (e.g. `take on me`) is treated as `play take on me`.
@@ -83,7 +85,7 @@ renders a Big Sur-style rounded squircle with a gradient and a glyph. Run
 build/icon-previews` to render every candidate design.
 
 The app runs as an agent (`LSUIElement`): no Dock icon, a menu-bar item with
-**Open Cuebar**, **Rebuild Library Index** and **Quit**.
+**Open Cuebar** and **Quit**.
 
 ## First run
 
@@ -93,8 +95,8 @@ report a clear error.
 
 The library index is built on first launch (about 0.26 s for a 6k-track library)
 and cached at `~/Library/Application Support/Cuebar/library-index.json`, so
-later launches are instant. Use **Rebuild Library Index** from the menu-bar item
-after adding music.
+later launches are instant. Use the in-app **Rebuild Library Index** command
+(type `rebuild`) after adding music.
 
 ---
 
@@ -121,7 +123,73 @@ after adding music.
    song title outranks an album with the same name), **library +100**, artist
    +150, album +30. Ties break on kind, then source, then title, then id.
 
+   A leading or trailing keyword — **`album`** or **`playlist`/`playlists`**
+   (`SearchQuery`) — is stripped from the term and sets a `RankPreference`
+   (`.songs` default / `.albums` / `.playlists`) that puts that kind first. So
+   `take on me` returns the song first, `take on me album` the album first. The
+   keyword must be separated by whitespace (typing `album` alone stays literal);
+   the catalog-fallback "strong match" check only considers songs.
+
 Typo tolerance is included: `blinding lites` resolves to *Blinding Lights*.
+
+## Album playback
+
+Music's scripting dictionary has **no album object** and no queue command, so
+albums are synthesized and played through a reusable playlist:
+
+- `LibraryAlbumIndex` groups library songs by `album + album artist`, ordered by
+  disc then track, producing one `MusicCandidate` (kind `.album`) per album and
+  an id → ordered-tracks map. Songs with no album are skipped.
+- The index (v2) fetches `album artist`, `disc number` and `track number` in the
+  same bulk Apple Event as the rest of the library.
+- Selecting an album calls `MusicController.playAlbum`, which builds a script
+  (`AppleScriptMusicController.albumQueueScript`) that ensures a user playlist
+  named **Cuebar Queue**, clears it, `duplicate`s the album's tracks in order,
+  sets `shuffle enabled` to false, and plays it. The queue is reused next time.
+
+## Playlists
+
+Library playlists are indexed alongside tracks (`LibraryIndex` v3):
+
+- `AppleScriptLibraryProvider.fetchPlaylists()` loops `user playlists` in one
+  Apple Event, keeping only `special kind = none` (which drops Music's system
+  playlists) and returning each name, persistent ID, track count and first
+  track id (for artwork).
+- Cuebar's own **Cuebar Queue** and empty playlists are excluded.
+- Selecting a playlist plays it **directly** —
+  `play (first user playlist whose persistent ID is …)` — so duplicate names are
+  safe and no temporary playlist is created. Shuffle is left as-is.
+- Playlists surface with a **"Playlist"** badge; the `playlist`/`playlists`
+  keyword prioritises them.
+
+## Search scope chip
+
+Typing `album`/`playlist` plus a space moves the keyword into a **scope chip**
+in the search box (`SearchScopeChip`), so the field then shows only the name.
+`PaletteModel.scope` holds a `RankPreference?`; ⌫ on an empty field, Esc, or
+clicking the chip clears it (`clearScope()`), and command rows are suppressed
+while a scope is active.
+
+## Feedback (toasts)
+
+Playback outcomes are reported by a small borderless `ToastPanel` (click-through,
+never key) anchored below the palette — or above it when there's no room, and
+top-centre when the palette is already hidden (success closes it).
+
+- `Toast` (Core) is the model; `Toast.Kind` sets the duration (2 s success,
+  4 s error). `PlaybackFeedback` (Core) builds the copy for song/album playback,
+  transport commands, and errors (via `LocalizedError.errorDescription`, so
+  `PlaybackError` and `AppleScriptError` — including the permission guidance —
+  come through unchanged).
+- `ToastCenter` (Core, `@MainActor`) holds `current` and auto-dismisses it; the
+  delay is injectable so it is unit-testable. Only one toast shows at a time; a
+  newer one replaces it.
+- `ToastWindowController` observes `ToastCenter.$current`, sizes the panel to the
+  SwiftUI content, animates it (fade only under Reduce Motion) and posts an
+  Accessibility announcement.
+- `PaletteModel` emits toasts through `onToast` before `onClose`, so the panel
+  frame is still available for anchoring. `shuffle` toggles read
+  `MusicController.shuffleEnabled()` first so the toast reports the new state.
 
 ## Album artwork
 
@@ -159,7 +227,13 @@ Sources/CuebarCore/          # testable, no UI
   MusicCandidate.swift       # result model (+ normalized fields)
   TextNormalizer.swift       # folding/punctuation normalization
   Similarity.swift           # Damerau–Levenshtein
-  Ranking.swift              # deterministic scoring
+  Ranking.swift              # deterministic scoring (+ RankPreference)
+  SearchQuery.swift          # parses an optional leading/trailing album/playlist scope
+  LibraryResolver.swift      # maps a catalog item onto a library track (title + artist only)
+  LibraryAlbumIndex.swift    # groups library songs into playable albums
+  Toast.swift                # transient feedback model (+ per-kind duration)
+  PlaybackFeedback.swift     # toast copy for playback outcomes
+  ToastCenter.swift          # current toast + auto-dismiss (injectable timing)
   Command.swift              # Command + CommandParser
   CommandCatalog.swift       # command entries + typed matching
   CommandExecutor.swift      # applies commands to a MusicController
@@ -185,7 +259,11 @@ Sources/Cuebar/              # AppKit/SwiftUI shell
   PaletteModel.swift         # presentation state
   PaletteView.swift          # Liquid Glass container
   ResultRowView.swift
+  SearchScopeChip.swift      # in-field album/playlist scope chip
   ArtworkView.swift          # rounded album-art tile
+  ToastView.swift            # toast content (glass)
+  ToastPanel.swift           # borderless click-through toast panel
+  ToastWindowController.swift# anchors + animates the toast
   WaveformView.swift         # Spotify-style now-playing equalizer
   SettingsView.swift         # embedded settings screen
   KeyHint.swift              # footer key hints
@@ -223,9 +301,13 @@ not captured, but layout, rows and text are.
 
 ## Tests
 
-`make test` runs 65 unit tests covering command parsing, command matching
+`make test` runs 138 unit tests covering command parsing, command matching
 (including that `play take on me` matches no command), now-playing parsing and
 list composition, artwork cache keys/persistence, the launch-hotkey preference
-(formatting, validation, persistence), ranking (the exact-song-over-album rule,
-library preference, typo tolerance and deterministic ordering), command
-execution and the library-first/catalog-fallback search flow.
+(formatting, validation, persistence), catalog-to-library resolution (never
+substituting a same-title track by a different artist), album grouping/ordering,
+the `album`/`playlist` scope keywords, library parsing (album artist/disc/track
+and playlists), repeat modes, toast copy and auto-dismissal, ranking (the
+exact-song-over-album rule, library preference, typo tolerance, album/playlist
+preference and deterministic ordering), command execution and the
+library-first/catalog-fallback search flow.

@@ -10,6 +10,7 @@ public enum MusicSource: String, Sendable, Codable, Hashable {
 public enum MusicKind: String, Sendable, Codable, Hashable {
     case song
     case album
+    case playlist
     case artist
 }
 
@@ -31,6 +32,17 @@ public struct MusicCandidate: Identifiable, Sendable, Hashable, Codable {
     /// Library items are played by persistent ID.
     public let persistentID: String?
 
+    // Album metadata (library). Optional so catalog rows and older cached
+    // indexes decode without them.
+    /// Album artist, used to group compilations into a single album.
+    public let albumArtist: String?
+    public let discNumber: Int?
+    public let trackNumber: Int?
+    /// Number of tracks in the album (album rows only).
+    public let trackCount: Int?
+    /// A representative track whose artwork to show for an album row.
+    public let artworkTrackID: String?
+
     public let normalizedTitle: String
     public let normalizedArtist: String
     public let normalizedAlbum: String
@@ -45,7 +57,12 @@ public struct MusicCandidate: Identifiable, Sendable, Hashable, Codable {
         durationSeconds: Double? = nil,
         artworkURL: URL? = nil,
         playbackURL: URL? = nil,
-        persistentID: String? = nil
+        persistentID: String? = nil,
+        albumArtist: String? = nil,
+        discNumber: Int? = nil,
+        trackNumber: Int? = nil,
+        trackCount: Int? = nil,
+        artworkTrackID: String? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -57,6 +74,11 @@ public struct MusicCandidate: Identifiable, Sendable, Hashable, Codable {
         self.artworkURL = artworkURL
         self.playbackURL = playbackURL
         self.persistentID = persistentID
+        self.albumArtist = albumArtist
+        self.discNumber = discNumber
+        self.trackNumber = trackNumber
+        self.trackCount = trackCount
+        self.artworkTrackID = artworkTrackID
         self.normalizedTitle = TextNormalizer.normalize(title)
         self.normalizedArtist = TextNormalizer.normalize(artist)
         self.normalizedAlbum = TextNormalizer.normalize(album)
@@ -67,6 +89,9 @@ public struct MusicCandidate: Identifiable, Sendable, Hashable, Codable {
         var parts: [String] = []
         if !artist.isEmpty { parts.append(artist) }
         if !album.isEmpty, album != title { parts.append(album) }
+        if (kind == .album || kind == .playlist), let trackCount {
+            parts.append("\(trackCount) track\(trackCount == 1 ? "" : "s")")
+        }
         return parts.joined(separator: " · ")
     }
 }

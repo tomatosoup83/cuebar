@@ -39,6 +39,17 @@ final class CommandParserTests: XCTestCase {
         XCTAssertEqual(CommandParser.parse("SHUFFLE OFF"), .shuffle(.off))
     }
 
+    func testRepeatVariants() {
+        XCTAssertNil(CommandParser.parse("repeat"))
+        XCTAssertEqual(CommandParser.parse("repeat queue"), .setRepeat(.all))
+        XCTAssertEqual(CommandParser.parse("repeat all"), .setRepeat(.all))
+        XCTAssertEqual(CommandParser.parse("repeat track"), .setRepeat(.one))
+        XCTAssertEqual(CommandParser.parse("repeat one"), .setRepeat(.one))
+        XCTAssertEqual(CommandParser.parse("repeat song"), .setRepeat(.one))
+        XCTAssertEqual(CommandParser.parse("repeat off"), .setRepeat(.off))
+        XCTAssertEqual(CommandParser.parse("REPEAT QUEUE"), .setRepeat(.all))
+    }
+
     func testEmptyInput() {
         XCTAssertNil(CommandParser.parse(""))
         XCTAssertNil(CommandParser.parse("   "))

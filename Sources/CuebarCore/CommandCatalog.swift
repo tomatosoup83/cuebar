@@ -6,6 +6,8 @@ public enum PaletteAction: Equatable, Sendable {
     case music(Command)
     /// Open the embedded settings screen.
     case openSettings
+    /// Re-scan the Music library index.
+    case rebuildLibraryIndex
 }
 
 /// A user-facing row that is not a song: a command or an app action.
@@ -96,12 +98,44 @@ public enum CommandCatalog {
             keywords: ["shuffle off"]
         ),
         CommandEntry(
+            id: "repeat.queue",
+            title: "Repeat Queue",
+            subtitle: "Repeat the whole queue",
+            symbolName: "repeat",
+            action: .music(.setRepeat(.all)),
+            keywords: ["repeat queue", "repeat all"]
+        ),
+        CommandEntry(
+            id: "repeat.track",
+            title: "Repeat Track",
+            subtitle: "Repeat the current track",
+            symbolName: "repeat.1",
+            action: .music(.setRepeat(.one)),
+            keywords: ["repeat track", "repeat one", "repeat song"]
+        ),
+        CommandEntry(
+            id: "repeat.off",
+            title: "Repeat Off",
+            subtitle: "Stop repeating",
+            symbolName: "repeat",
+            action: .music(.setRepeat(.off)),
+            keywords: ["repeat off", "repeat none"]
+        ),
+        CommandEntry(
             id: "settings",
             title: "Settings",
             subtitle: "Change Cuebar's launch hotkey",
             symbolName: "gearshape",
             action: .openSettings,
             keywords: ["settings", "preferences", "hotkey", "shortcut"]
+        ),
+        CommandEntry(
+            id: "rebuildIndex",
+            title: "Rebuild Library Index",
+            subtitle: "Re-scan your Music library",
+            symbolName: "arrow.clockwise",
+            action: .rebuildLibraryIndex,
+            keywords: ["rebuild", "rebuild index", "rebuild library", "reindex", "library index", "rescan"]
         )
     ]
 

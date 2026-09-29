@@ -28,10 +28,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let controller = PaletteWindowController(
             searchService: searchService,
             musicController: musicController,
+            libraryProvider: libraryProvider,
             hotKey: preference
         )
         controller.onHotKeyChange = { [weak self] newPreference in
             self?.applyHotKey(newPreference) ?? false
+        }
+        controller.onRebuildLibraryIndex = { [weak self] in
+            await self?.refreshLibraryIndex()
         }
         paletteController = controller
 
@@ -80,23 +84,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func loadLibrary() {
         if let cached = indexStore.loadCached() {
-            libraryProvider.setIndex(cached.tracks)
-            NSLog("Cuebar: loaded \(cached.tracks.count) cached tracks.")
+            libraryProvider.setIndex(cached.tracks, playlists: cached.playlists)
+            NSLog("Cuebar: loaded \(cached.tracks.count) cached tracks, \(cached.playlists.count) playlists.")
         }
         Task { await refreshLibraryIndex() }
     }
 
-    private func refreshLibraryIndex() async {
+    @discardableResult
+    private func refreshLibraryIndex() async -> LibraryIndexSummary? {
         searchService?.isIndexing = true
         defer { searchService?.isIndexing = false }
 
         do {
             let tracks = try await libraryFetcher.fetchLibrary()
-            libraryProvider.setIndex(tracks)
-            indexStore.save(LibraryIndex(tracks: tracks))
-            NSLog("Cuebar: indexed \(tracks.count) library tracks.")
+            let playlists = (try? await libraryFetcher.fetchPlaylists()) ?? []
+            libraryProvider.setIndex(tracks, playlists: playlists)
+            indexStore.save(LibraryIndex(tracks: tracks, playlists: playlists))
+            NSLog("Cuebar: indexed \(tracks.count) library tracks, \(playlists.count) playlists.")
+            return LibraryIndexSummary(trackCount: tracks.count, playlistCount: playlists.count)
         } catch {
             NSLog("Cuebar: library indexing failed: \(error.localizedDescription)")
+            return nil
         }
     }
 
@@ -111,8 +119,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let menu = NSMenu()
         menu.addItem(makeItem("Open Cuebar", action: #selector(openPalette)))
-        menu.addItem(.separator())
-        menu.addItem(makeItem("Rebuild Library Index", action: #selector(rebuildIndex)))
         menu.addItem(.separator())
         let quit = makeItem("Quit Cuebar", action: #selector(quitApp))
         quit.keyEquivalent = "q"
@@ -130,10 +136,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openPalette() {
         paletteController?.show()
-    }
-
-    @objc private func rebuildIndex() {
-        Task { await refreshLibraryIndex() }
     }
 
     @objc private func quitApp() {

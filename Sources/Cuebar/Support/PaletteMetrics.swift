@@ -5,4 +5,9 @@ import AppKit
 enum PaletteMetrics {
     static let cornerRadius: CGFloat = 24
     static let panelSize = NSSize(width: 660, height: 420)
+
+    // Toast
+    static let toastCornerRadius: CGFloat = 16
+    static let toastMaxWidth: CGFloat = 420
+    static let toastGap: CGFloat = 12
 }

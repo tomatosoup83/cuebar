@@ -111,4 +111,31 @@ final class RankingTests: XCTestCase {
         let items = [song("a", "Take On Me")]
         XCTAssertTrue(Ranking.rank(items, query: "zzzzzqqqq").isEmpty)
     }
+
+    func testSongWinsByDefaultButAlbumWinsWithKeyword() {
+        let items = [
+            song("song", "Take On Me", artist: "a-ha", source: .library),
+            album("album", "Take On Me", artist: "a-ha", source: .library)
+        ]
+        XCTAssertEqual(Ranking.rank(items, query: "take on me").first?.id, "song")
+        XCTAssertEqual(
+            Ranking.rank(items, query: "take on me", preference: .albums).first?.id,
+            "album"
+        )
+    }
+
+    func testPlaylistPreferencePutsPlaylistsFirst() {
+        let playlist = MusicCandidate(
+            id: "pl", kind: .playlist, source: .library,
+            title: "Nightfall", artist: "", album: ""
+        )
+        let song = song("song", "Nightfall", source: .library)
+        let album = album("album", "Nightfall", source: .library)
+
+        XCTAssertEqual(Ranking.rank([song, album, playlist], query: "nightfall").first?.id, "song")
+        XCTAssertEqual(
+            Ranking.rank([song, album, playlist], query: "nightfall", preference: .playlists).first?.id,
+            "pl"
+        )
+    }
 }

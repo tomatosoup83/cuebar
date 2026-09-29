@@ -94,4 +94,32 @@ final class SearchServiceTests: XCTestCase {
         service.clear()
         XCTAssertTrue(service.results.isEmpty)
     }
+
+    func testAlbumKeywordPrioritizesAlbum() async {
+        let song = makeSong("lib", "Take On Me", source: .library)
+        let album = MusicCandidate(
+            id: "album",
+            kind: .album,
+            source: .library,
+            title: "Take On Me",
+            artist: "a-ha",
+            album: "Take On Me"
+        )
+        let library = MockSearchProvider(results: [song, album])
+
+        let service = SearchService(
+            libraryProvider: library,
+            catalogProvider: MockSearchProvider { _, _ in [] },
+            resultLimit: 20,
+            catalogDebounceNanoseconds: 0
+        )
+
+        service.updateQuery("take on me")
+        try? await Task.sleep(nanoseconds: 80_000_000)
+        XCTAssertEqual(service.results.first?.id, "lib")
+
+        service.updateQuery("take on me album")
+        try? await Task.sleep(nanoseconds: 80_000_000)
+        XCTAssertEqual(service.results.first?.id, "album")
+    }
 }

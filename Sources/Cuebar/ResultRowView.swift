@@ -55,7 +55,13 @@ struct ResultRowView: View {
         switch item {
         case .nowPlaying: return nil // rendered together with the waveform
         case .command: return "Command"
-        case .music(let candidate): return candidate.source == .library ? "Library" : "Catalog"
+        case .music(let candidate):
+            guard candidate.source == .library else { return "Catalog" }
+            switch candidate.kind {
+            case .album: return "Album"
+            case .playlist: return "Playlist"
+            default: return "Library"
+            }
         }
     }
 
@@ -111,9 +117,14 @@ struct ResultRowView: View {
     private func artworkSource(for candidate: MusicCandidate) -> ArtworkSource? {
         switch candidate.source {
         case .library:
-            guard let persistentID = candidate.persistentID else { return nil }
+            // A playlist's `persistentID` is the playlist itself, not a track,
+            // so use its representative track for artwork.
+            let trackID = candidate.kind == .playlist
+                ? candidate.artworkTrackID
+                : (candidate.persistentID ?? candidate.artworkTrackID)
+            guard let trackID else { return nil }
             return .library(
-                persistentID: persistentID,
+                persistentID: trackID,
                 artist: candidate.artist,
                 album: candidate.album
             )

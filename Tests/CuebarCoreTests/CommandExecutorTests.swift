@@ -65,4 +65,48 @@ final class CommandExecutorTests: XCTestCase {
         try await executor.execute(.play(query: ""), selected: nil)
         XCTAssertEqual(controller.calls, [.resume])
     }
+
+    func testExecuteAlbumPlaysTracksInOrder() async throws {
+        let controller = MockMusicController()
+        let executor = CommandExecutor(controller: controller)
+
+        try await executor.executeAlbum([song("a"), song("b")])
+        XCTAssertEqual(controller.calls, [.playAlbum(["a", "b"])])
+    }
+
+    func testShuffleEnabledReadsBackState() async throws {
+        let controller = MockMusicController()
+        controller.shuffleEnabledResult = true
+
+        let value = try await controller.shuffleEnabled()
+        XCTAssertTrue(value)
+        XCTAssertEqual(controller.calls, [.shuffleEnabled])
+    }
+
+    func testRepeatCommands() async throws {
+        let controller = MockMusicController()
+        let executor = CommandExecutor(controller: controller)
+
+        try await executor.execute(.setRepeat(.all), selected: nil)
+        try await executor.execute(.setRepeat(.one), selected: nil)
+        XCTAssertEqual(controller.calls, [.setRepeat(.all), .setRepeat(.one)])
+    }
+
+    func testExecutePlaylistPlaysIt() async throws {
+        let controller = MockMusicController()
+        let executor = CommandExecutor(controller: controller)
+        let playlist = MusicCandidate(
+            id: "library:playlist:PID",
+            kind: .playlist,
+            source: .library,
+            title: "Focus",
+            artist: "",
+            album: "",
+            persistentID: "PID",
+            trackCount: 5
+        )
+
+        try await executor.executePlaylist(playlist)
+        XCTAssertEqual(controller.calls, [.playPlaylist("library:playlist:PID")])
+    }
 }

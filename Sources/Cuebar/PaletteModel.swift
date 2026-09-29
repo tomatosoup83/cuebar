@@ -12,6 +12,8 @@ enum PaletteScreen: Equatable {
 @MainActor
 final class PaletteModel: ObservableObject {
     @Published var query: String = ""
+    /// Active `album`/`playlist` scope (nil = plain search).
+    @Published private(set) var scope: RankPreference?
     @Published private(set) var items: [PaletteItem] = []
     @Published private(set) var selectedIndex: Int = 0
     @Published private(set) var statusMessage: String?
@@ -27,11 +29,16 @@ final class PaletteModel: ObservableObject {
     @Published private(set) var settingsMessage: String?
 
     var onClose: (() -> Void)?
+    /// Reports playback outcomes as toasts.
+    var onToast: ((Toast) -> Void)?
+    /// Rebuilds the library index; returns counts, or nil on failure.
+    var onRebuildLibraryIndex: (() async -> LibraryIndexSummary?)?
     /// Applies a new hotkey; returns false when the shortcut is unavailable.
     var onHotKeyChange: ((HotKeyPreference) -> Bool)?
 
     private let searchService: SearchService
     private let musicController: MusicController
+    private let libraryProvider: LibrarySearchProvider
     private let executor: CommandExecutor
     private var cancellables = Set<AnyCancellable>()
 
@@ -42,10 +49,12 @@ final class PaletteModel: ObservableObject {
     init(
         searchService: SearchService,
         musicController: MusicController,
+        libraryProvider: LibrarySearchProvider,
         hotKey: HotKeyPreference = .default
     ) {
         self.searchService = searchService
         self.musicController = musicController
+        self.libraryProvider = libraryProvider
         self.hotKey = hotKey
         self.executor = CommandExecutor(controller: musicController)
 
@@ -77,6 +86,7 @@ final class PaletteModel: ObservableObject {
 
     func reset() {
         query = ""
+        scope = nil
         searchService.clear()
         commands = []
         music = []
@@ -97,22 +107,36 @@ final class PaletteModel: ObservableObject {
 
     /// Recompute the command rows and the song search for the current input.
     func queryChanged() {
+        // A leading/trailing keyword followed by whitespace becomes a scope:
+        // move it out of the field text so it isn't duplicated by the chip.
+        let parsed = SearchQuery.parse(query)
+        if parsed.preference != .songs {
+            scope = parsed.preference
+            query = parsed.term
+        }
+
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        // Commands: typed text that partially matches a command name, or all
-        // commands when the box is empty.
-        commands = CommandCatalog.matches(for: trimmed)
+        // A scope is music-only, so command rows are suppressed.
+        commands = scope == nil ? CommandCatalog.matches(for: trimmed) : []
 
         // Songs: only for `play <song>` or free text. A recognised non-play
         // command shows just the command.
         if let term = CommandParser.searchTerm(for: CommandParser.parse(query)), !term.isEmpty {
-            searchService.updateQuery(term)
+            searchService.updateQuery(SearchQuery(term: term, preference: scope ?? .songs))
         } else {
             searchService.clear()
             music = []
         }
 
         rebuildItems()
+    }
+
+    /// Drops the active scope, returning to a plain search.
+    func clearScope() {
+        guard scope != nil else { return }
+        scope = nil
+        queryChanged()
     }
 
     /// Refresh the current track from Music.app.
@@ -148,8 +172,85 @@ final class PaletteModel: ObservableObject {
         case .command(let entry):
             run(entry.action, selected: nil)
         case .music(let candidate):
-            run(.music(.play(query: candidate.title)), selected: candidate)
+            // A library album plays start to finish; a library playlist plays
+            // directly; catalog rows still can't be started.
+            if candidate.kind == .album, candidate.source == .library {
+                playAlbum(candidate)
+                return
+            }
+            if candidate.kind == .playlist, candidate.source == .library {
+                playPlaylist(candidate)
+                return
+            }
+            guard let playable = playableTrack(for: candidate) else {
+                statusMessage = "“\(candidate.title)” isn’t in your Music library, so Cuebar can’t play it. Add it in Music first."
+                onToast?(PlaybackFeedback.notInLibrary(candidate.title))
+                return
+            }
+            run(.music(.play(query: playable.title)), selected: playable)
         }
+    }
+
+    /// Loads a library album's tracks into Music and plays them in order.
+    private func playAlbum(_ album: MusicCandidate) {
+        guard let tracks = libraryProvider.tracks(forAlbumID: album.id), !tracks.isEmpty else {
+            statusMessage = "“\(album.title)” has no playable tracks."
+            onToast?(PlaybackFeedback.emptyAlbum(album.title))
+            return
+        }
+        statusMessage = nil
+        Task {
+            do {
+                try await self.executor.executeAlbum(tracks)
+                self.onToast?(PlaybackFeedback.playingAlbum(album, trackCount: tracks.count))
+                self.onClose?()
+            } catch {
+                let toast = PlaybackFeedback.failure(error)
+                self.statusMessage = toast.message
+                self.onToast?(toast)
+            }
+        }
+    }
+
+    /// Plays a library playlist directly.
+    private func playPlaylist(_ playlist: MusicCandidate) {
+        statusMessage = nil
+        let trackCount = playlist.trackCount ?? 0
+        Task {
+            do {
+                try await self.executor.executePlaylist(playlist)
+                self.onToast?(PlaybackFeedback.playingPlaylist(playlist, trackCount: trackCount))
+                self.onClose?()
+            } catch {
+                let toast = PlaybackFeedback.failure(error)
+                self.statusMessage = toast.message
+                self.onToast?(toast)
+            }
+        }
+    }
+
+    /// Re-scans the Music library and reports the result as a toast.
+    private func rebuildLibraryIndex() {
+        guard let rebuild = onRebuildLibraryIndex else {
+            onToast?(PlaybackFeedback.indexRebuildFailed())
+            return
+        }
+        statusMessage = nil
+        onToast?(PlaybackFeedback.rebuildingIndex())
+        Task {
+            if let summary = await rebuild() {
+                self.onToast?(PlaybackFeedback.indexRebuilt(summary))
+            } else {
+                self.onToast?(PlaybackFeedback.indexRebuildFailed())
+            }
+        }
+    }
+
+    /// Catalog results are played through the user's library when the same
+    /// track exists there; only library tracks can be started reliably.
+    private func playableTrack(for candidate: MusicCandidate) -> MusicCandidate? {
+        if candidate.source == .library { return candidate }
+        return LibraryResolver.resolve(candidate, in: libraryProvider.snapshot())
     }
 
     // MARK: - Settings
@@ -223,17 +324,61 @@ final class PaletteModel: ObservableObject {
         switch action {
         case .openSettings:
             openSettings()
+        case .rebuildLibraryIndex:
+            rebuildLibraryIndex()
         case .music(let command):
             statusMessage = nil
             Task {
+                // Read the current shuffle state so a toggle can report the
+                // resulting value (best effort).
+                var shuffleBefore: Bool?
+                if case .shuffle(.toggle) = command {
+                    shuffleBefore = try? await self.musicController.shuffleEnabled()
+                }
                 do {
                     try await self.executor.execute(command, selected: selected)
+                    self.onToast?(self.successToast(
+                        for: command,
+                        selected: selected,
+                        shuffleBefore: shuffleBefore
+                    ))
                     self.onClose?()
                 } catch {
-                    self.statusMessage = (error as? LocalizedError)?.errorDescription
-                        ?? error.localizedDescription
+                    let toast = PlaybackFeedback.failure(error)
+                    self.statusMessage = toast.message
+                    self.onToast?(toast)
                 }
             }
+        }
+    }
+
+    private func successToast(
+        for command: Command,
+        selected: MusicCandidate?,
+        shuffleBefore: Bool?
+    ) -> Toast {
+        switch command {
+        case .play(let term):
+            if !term.isEmpty, let selected { return PlaybackFeedback.playing(selected) }
+            return PlaybackFeedback.resumed()
+        case .pause:
+            return PlaybackFeedback.paused()
+        case .resume:
+            return PlaybackFeedback.resumed()
+        case .next:
+            return PlaybackFeedback.nextTrack()
+        case .previous:
+            return PlaybackFeedback.previousTrack()
+        case .shuffle(let action):
+            switch action {
+            case .on: return PlaybackFeedback.shuffle(true)
+            case .off: return PlaybackFeedback.shuffle(false)
+            case .toggle:
+                if let shuffleBefore { return PlaybackFeedback.shuffle(!shuffleBefore) }
+                return PlaybackFeedback.shuffleToggled()
+            }
+        case .setRepeat(let mode):
+            return PlaybackFeedback.repeatMode(mode)
         }
     }
 

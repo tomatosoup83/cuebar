@@ -17,21 +17,31 @@ public final class AppleScriptLibraryProvider: @unchecked Sendable {
         return Self.parse(raw)
     }
 
+    /// Fetches the user's playlists (excluding system playlists and Cuebar's
+    /// own album queue).
+    public func fetchPlaylists() async throws -> [MusicCandidate] {
+        let raw = try await runner.string(Self.playlistScript)
+        return Self.parsePlaylists(raw)
+    }
+
     // MARK: - Parsing
 
     static let listSeparator = "\u{1e}"   // ASCII record separator
     static let fieldSeparator = "\u{1f}"  // ASCII unit separator
 
     static func parse(_ raw: String) -> [MusicCandidate] {
-        // The script joins five property lists with the record separator.
+        // The script joins eight property lists with the record separator.
         var sections = raw.components(separatedBy: listSeparator)
-        while sections.count < 5 { sections.append("") }
+        while sections.count < 8 { sections.append("") }
 
         let names = split(sections[0])
         let artists = split(sections[1])
         let albums = split(sections[2])
         let ids = split(sections[3])
         let durations = split(sections[4])
+        let albumArtists = split(sections[5])
+        let discNumbers = split(sections[6])
+        let trackNumbers = split(sections[7])
 
         let count = names.count
         var tracks: [MusicCandidate] = []
@@ -45,6 +55,7 @@ public final class AppleScriptLibraryProvider: @unchecked Sendable {
             guard !title.isEmpty else { continue }
 
             let duration = Double(value(durations, at: index))
+            let albumArtist = value(albumArtists, at: index)
             tracks.append(
                 MusicCandidate(
                     id: persistentID,
@@ -54,7 +65,10 @@ public final class AppleScriptLibraryProvider: @unchecked Sendable {
                     artist: value(artists, at: index),
                     album: value(albums, at: index),
                     durationSeconds: duration,
-                    persistentID: persistentID
+                    persistentID: persistentID,
+                    albumArtist: albumArtist.isEmpty ? nil : albumArtist,
+                    discNumber: Int(value(discNumbers, at: index)),
+                    trackNumber: Int(value(trackNumbers, at: index))
                 )
             )
         }
@@ -63,6 +77,42 @@ public final class AppleScriptLibraryProvider: @unchecked Sendable {
 
     private static func split(_ section: String) -> [String] {
         section.components(separatedBy: fieldSeparator)
+    }
+
+    // MARK: - Playlists
+
+    /// Parses one `name⟨US⟩id⟨US⟩count⟨US⟩firstTrackId⟨RS⟩` record per playlist.
+    static func parsePlaylists(_ raw: String) -> [MusicCandidate] {
+        var playlists: [MusicCandidate] = []
+
+        for record in raw.components(separatedBy: listSeparator) where !record.isEmpty {
+            let parts = record.components(separatedBy: fieldSeparator)
+            guard parts.count >= 4 else { continue }
+
+            let name = value(parts, at: 0)
+            let persistentID = value(parts, at: 1)
+            guard !name.isEmpty, !persistentID.isEmpty else { continue }
+            guard name != AppleScriptMusicController.albumQueuePlaylistName else { continue }
+
+            let trackCount = Int(value(parts, at: 2)) ?? 0
+            guard trackCount > 0 else { continue }
+
+            let firstTrackID = value(parts, at: 3)
+            playlists.append(
+                MusicCandidate(
+                    id: "library:playlist:\(persistentID)",
+                    kind: .playlist,
+                    source: .library,
+                    title: name,
+                    artist: "",
+                    album: "",
+                    persistentID: persistentID,
+                    trackCount: trackCount,
+                    artworkTrackID: firstTrackID.isEmpty ? nil : firstTrackID
+                )
+            )
+        }
+        return playlists
     }
 
     private static func value(_ list: [String], at index: Int) -> String {
@@ -100,14 +150,64 @@ public final class AppleScriptLibraryProvider: @unchecked Sendable {
     	on error
     		set theDurations to {}
     	end try
+    	try
+    		set theAlbumArtists to album artist of every track of library playlist 1
+    	on error
+    		set theAlbumArtists to {}
+    	end try
+    	try
+    		set theDiscNumbers to disc number of every track of library playlist 1
+    	on error
+    		set theDiscNumbers to {}
+    	end try
+    	try
+    		set theTrackNumbers to track number of every track of library playlist 1
+    	on error
+    		set theTrackNumbers to {}
+    	end try
     	set AppleScript's text item delimiters to fieldSep
     	set namesText to theNames as string
     	set artistsText to theArtists as string
     	set albumsText to theAlbums as string
     	set idsText to theIds as string
     	set durationsText to theDurations as string
+    	set albumArtistsText to theAlbumArtists as string
+    	set discNumbersText to theDiscNumbers as string
+    	set trackNumbersText to theTrackNumbers as string
     	set AppleScript's text item delimiters to ""
     end tell
-    return namesText & listSep & artistsText & listSep & albumsText & listSep & idsText & listSep & durationsText
+    return namesText & listSep & artistsText & listSep & albumsText & listSep & idsText & listSep & durationsText & listSep & albumArtistsText & listSep & discNumbersText & listSep & trackNumbersText
+    """#
+
+    static let playlistScript = #"""
+    set fieldSep to (ASCII character 31)
+    set listSep to (ASCII character 30)
+    set out to ""
+    tell application "Music"
+    	repeat with p in user playlists
+    		try
+    			set pKind to (special kind of p as string)
+    		on error
+    			set pKind to ""
+    		end try
+    		if pKind is "none" then
+    			try
+    				set pName to name of p
+    				set pID to persistent ID of p
+    				set pCount to (count of tracks of p)
+    				set firstID to ""
+    				if pCount > 0 then
+    					try
+    						set firstID to persistent ID of track 1 of p
+    					on error
+    						set firstID to ""
+    					end try
+    				end if
+    				set out to out & pName & fieldSep & pID & fieldSep & (pCount as string) & fieldSep & firstID & listSep
+    			end try
+    		end if
+    	end repeat
+    end tell
+    return out
     """#
 }

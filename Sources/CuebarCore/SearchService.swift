@@ -18,7 +18,7 @@ public final class SearchService: ObservableObject {
     private let catalogDebounce: UInt64
 
     private var searchTask: Task<Void, Never>?
-    private var currentQuery = ""
+    private var currentQuery: SearchQuery?
 
     public init(
         libraryProvider: MusicSearchProviding,
@@ -32,13 +32,20 @@ public final class SearchService: ObservableObject {
         self.catalogDebounce = catalogDebounceNanoseconds
     }
 
+    /// Parses `query` (including any `album`/`playlist` keyword) and searches.
     public func updateQuery(_ query: String) {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed != currentQuery else { return }
-        currentQuery = trimmed
+        updateQuery(SearchQuery.parse(query))
+    }
+
+    public func updateQuery(_ parsed: SearchQuery) {
+        guard parsed != currentQuery else { return }
+        currentQuery = parsed
+
+        let term = parsed.term
+        let preference = parsed.preference
 
         searchTask?.cancel()
-        guard !trimmed.isEmpty else {
+        guard !term.isEmpty else {
             results = []
             isSearching = false
             statusMessage = nil
@@ -55,12 +62,19 @@ public final class SearchService: ObservableObject {
             var merged: [MusicCandidate] = []
             var libraryIsStrong = false
             do {
-                let local = try await self.libraryProvider.search(trimmed, limit: self.resultLimit * 2)
+                let local = try await self.libraryProvider.search(term, limit: self.resultLimit * 2)
                 if Task.isCancelled { return }
-                merged = Ranking.rank(local, query: trimmed, limit: self.resultLimit)
-                libraryIsStrong = Ranking.hasStrongMatch(
+                merged = Ranking.rank(
                     local,
-                    query: trimmed,
+                    query: term,
+                    preference: preference,
+                    limit: self.resultLimit
+                )
+                // The catalog is skipped only when the library has a strong
+                // *song* match; album/playlist rows never suppress it.
+                libraryIsStrong = Ranking.hasStrongMatch(
+                    local.filter { $0.kind == .song },
+                    query: term,
                     threshold: Ranking.strongMatchThreshold
                 )
                 self.results = merged
@@ -81,9 +95,14 @@ public final class SearchService: ObservableObject {
             if Task.isCancelled { return }
 
             do {
-                let catalog = try await self.catalogProvider.search(trimmed, limit: 15)
+                let catalog = try await self.catalogProvider.search(term, limit: 15)
                 if Task.isCancelled { return }
-                let combined = Ranking.rank(merged + catalog, query: trimmed, limit: self.resultLimit)
+                let combined = Ranking.rank(
+                    merged + catalog,
+                    query: term,
+                    preference: preference,
+                    limit: self.resultLimit
+                )
                 self.results = combined
             } catch {
                 if Task.isCancelled { return }
@@ -99,7 +118,7 @@ public final class SearchService: ObservableObject {
     public func clear() {
         searchTask?.cancel()
         searchTask = nil
-        currentQuery = ""
+        currentQuery = nil
         results = []
         isSearching = false
         statusMessage = nil

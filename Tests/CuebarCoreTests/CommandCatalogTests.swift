@@ -45,6 +45,17 @@ final class CommandCatalogTests: XCTestCase {
         XCTAssertEqual(CommandCatalog.matches(for: "pase").first?.id, "pause")
     }
 
+    func testRepeatVariants() {
+        // "repeat" alone surfaces the three explicit modes, no cycle.
+        let bare = Set(CommandCatalog.matches(for: "repeat").map(\.id))
+        XCTAssertEqual(bare, ["repeat.queue", "repeat.track", "repeat.off"])
+
+        XCTAssertEqual(CommandCatalog.matches(for: "repeat queue").first?.id, "repeat.queue")
+        XCTAssertEqual(CommandCatalog.matches(for: "repeat all").first?.id, "repeat.queue")
+        XCTAssertEqual(CommandCatalog.matches(for: "repeat track").first?.id, "repeat.track")
+        XCTAssertEqual(CommandCatalog.matches(for: "repeat off").first?.id, "repeat.off")
+    }
+
     /// The important negative: a song query must not match the "play" keyword.
     func testSongQueryMatchesNoCommand() {
         XCTAssertTrue(CommandCatalog.matches(for: "play take on me").isEmpty)
@@ -53,6 +64,12 @@ final class CommandCatalogTests: XCTestCase {
 
     func testBarePlayShowsResume() {
         XCTAssertEqual(CommandCatalog.matches(for: "play").first?.id, "resume")
+    }
+
+    func testRebuildIndexCommand() {
+        XCTAssertEqual(CommandCatalog.matches(for: "rebuild").first?.id, "rebuildIndex")
+        XCTAssertEqual(CommandCatalog.matches(for: "reindex").first?.id, "rebuildIndex")
+        XCTAssertEqual(CommandCatalog.matches(for: "library index").first?.id, "rebuildIndex")
     }
 
     func testCommandsAreComposedBeforeMusic() {

@@ -3,16 +3,35 @@ import Foundation
 /// A snapshot of the user's Music library.
 public struct LibraryIndex: Sendable, Codable {
     /// Bumped whenever the persisted shape or normalization changes.
-    public static let currentVersion = 1
+    /// 2: added album artist / disc number / track number (album playback).
+    /// 3: added library playlists.
+    public static let currentVersion = 3
 
     public var version: Int
     public var tracks: [MusicCandidate]
+    public var playlists: [MusicCandidate]
     public var builtAt: Date
 
-    public init(tracks: [MusicCandidate], builtAt: Date = Date()) {
+    public init(
+        tracks: [MusicCandidate],
+        playlists: [MusicCandidate] = [],
+        builtAt: Date = Date()
+    ) {
         self.version = Self.currentVersion
         self.tracks = tracks
+        self.playlists = playlists
         self.builtAt = builtAt
+    }
+}
+
+/// Counts from a library (re)index, for user feedback.
+public struct LibraryIndexSummary: Equatable, Sendable {
+    public let trackCount: Int
+    public let playlistCount: Int
+
+    public init(trackCount: Int, playlistCount: Int) {
+        self.trackCount = trackCount
+        self.playlistCount = playlistCount
     }
 }
 

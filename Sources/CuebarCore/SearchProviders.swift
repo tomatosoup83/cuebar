@@ -9,6 +9,8 @@ public protocol MusicSearchProviding: Sendable {
 public final class LibrarySearchProvider: MusicSearchProviding, @unchecked Sendable {
     private let lock = NSLock()
     private var tracks: [MusicCandidate] = []
+    private var playlists: [MusicCandidate] = []
+    private var albumIndex = LibraryAlbumIndex(tracks: [])
 
     public init() {}
 
@@ -18,17 +20,41 @@ public final class LibrarySearchProvider: MusicSearchProviding, @unchecked Senda
     }
 
     public func setIndex(_ tracks: [MusicCandidate]) {
-        lock.lock(); defer { lock.unlock() }
-        self.tracks = tracks
+        setIndex(tracks, playlists: [])
     }
 
+    public func setIndex(_ tracks: [MusicCandidate], playlists: [MusicCandidate]) {
+        lock.lock(); defer { lock.unlock() }
+        self.tracks = tracks
+        self.playlists = playlists
+        self.albumIndex = LibraryAlbumIndex(tracks: tracks)
+    }
+
+    /// Songs only — catalog→library resolution must never see album/playlist rows.
     public func snapshot() -> [MusicCandidate] {
         lock.lock(); defer { lock.unlock() }
         return tracks
     }
 
+    public func albums() -> [MusicCandidate] {
+        lock.lock(); defer { lock.unlock() }
+        return albumIndex.albums
+    }
+
+    /// The ordered tracks of a library album, or nil when unknown.
+    public func tracks(forAlbumID id: String) -> [MusicCandidate]? {
+        lock.lock(); defer { lock.unlock() }
+        return albumIndex.tracks(forAlbumID: id)
+    }
+
     public func search(_ query: String, limit: Int) async throws -> [MusicCandidate] {
-        Ranking.rank(snapshot(), query: query, limit: limit)
+        Ranking.rank(searchPool(), query: query, limit: limit)
+    }
+
+    /// Songs + derived album rows + playlists, copied under the lock.
+    private func searchPool() -> [MusicCandidate] {
+        lock.lock(); defer { lock.unlock() }
+        return tracks + albumIndex.albums + playlists
     }
 }
 
@@ -58,7 +84,7 @@ public final class ITunesCatalogProvider: MusicSearchProviding, @unchecked Senda
 
         var request = URLRequest(url: url)
         request.timeoutInterval = 8
-        request.setValue("Cuebar/0.1 (macOS)", forHTTPHeaderField: "User-Agent")
+        request.setValue("Cuebar/0.2 (macOS)", forHTTPHeaderField: "User-Agent")
 
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {

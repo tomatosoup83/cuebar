@@ -43,7 +43,11 @@ struct PaletteView: View {
                 .font(.system(size: 18, weight: .medium))
                 .foregroundStyle(.secondary)
 
-            TextField("Play a song or type a command…", text: $model.query)
+            if let scope = model.scope {
+                SearchScopeChip(scope: scope) { model.clearScope() }
+            }
+
+            TextField(fieldPlaceholder, text: $model.query)
                 .textFieldStyle(.plain)
                 .font(.system(size: 20))
                 .focused($isFieldFocused)
@@ -55,6 +59,14 @@ struct PaletteView: View {
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 16)
+    }
+
+    private var fieldPlaceholder: String {
+        switch model.scope {
+        case .albums: return "Album name…"
+        case .playlists: return "Playlist name…"
+        default: return "Play a song or type a command…"
+        }
     }
 
     @ViewBuilder
@@ -120,8 +132,8 @@ struct PaletteView: View {
                 Text("Indexing library…")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
-            } else if let term = searchTerm, !term.isEmpty {
-                Text("Searching for “\(term)”")
+            } else if let term = searchTerm {
+                Text(searchLabel(for: term))
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             } else {
@@ -134,6 +146,16 @@ struct PaletteView: View {
 
     /// The song term implied by the current input, if any.
     private var searchTerm: String? {
-        CommandParser.searchTerm(for: CommandParser.parse(model.query))
+        guard let term = CommandParser.searchTerm(for: CommandParser.parse(model.query)),
+              !term.isEmpty else { return nil }
+        return term
+    }
+
+    private func searchLabel(for term: String) -> String {
+        switch model.scope {
+        case .albums: return "Searching for “\(term)” · albums first"
+        case .playlists: return "Searching for “\(term)” · playlists first"
+        default: return "Searching for “\(term)”"
+        }
     }
 }
