@@ -11,6 +11,8 @@ public protocol MusicController: Sendable {
     func playAlbum(_ tracks: [MusicCandidate]) async throws
     /// Plays a library playlist directly, leaving shuffle as-is.
     func playPlaylist(_ playlist: MusicCandidate) async throws
+    /// Whether Cuebar may control Music (raises the system prompt on first use).
+    func checkAutomationPermission() async -> Bool
     func pause() async throws
     func resume() async throws
     func next() async throws
@@ -126,8 +128,22 @@ public final class AppleScriptMusicController: MusicController, @unchecked Senda
         try await runner.run("tell application \"Music\" to set song repeat to \(mode.rawValue)")
     }
 
-    public func nowPlaying() async throws -> NowPlayingTrack? {
-        // Never launch Music just by opening the palette.
+    public func checkAutomationPermission() async -> Bool {
+        do {
+            _ = try await runner.string("tell application \"Music\" to get version")
+            return true
+        } catch {
+            return Self.permissionGranted(from: error)
+        }
+    }
+
+    /// Maps an AppleScript failure onto whether Automation access is available.
+    static func permissionGranted(from error: Error) -> Bool {
+        guard let scriptError = error as? AppleScriptError else { return true }
+        return !scriptError.isPermissionDenied
+    }
+
+    public func nowPlaying() async throws -> NowPlayingTrack? {        // Never launch Music just by opening the palette.
         guard Self.isMusicRunning else { return nil }
         let raw = try await runner.string(Self.nowPlayingScript)
         return NowPlayingTrack.parse(raw)

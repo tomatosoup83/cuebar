@@ -51,8 +51,9 @@ make run
 ```
 
 `make run` compiles the app, assembles `build/Cuebar.app`, and launches it. On
-first use, macOS asks once for permission to control **Music** (System Settings ›
-Privacy & Security › Automation).
+first launch, Cuebar shows a short **onboarding** (welcome → grant access →
+ready). On first use, macOS asks once for permission to control **Music** (System
+Settings › Privacy & Security › Automation).
 
 ## Usage
 
@@ -82,13 +83,17 @@ palette. The search field supports the usual editing shortcuts (`⌘A`, `⌘C`,
 ## Settings
 
 Settings live **inside the same panel** — open them with **⌘,** or by typing
-`settings`. There's currently one option, **Launch Hotkey**:
+`settings`. There are two options:
+
+**Launch Hotkey**
 
 - click the shortcut (or press **Return**) to record a new one
 - the combination must include ⌘, ⌥ or ⌃
 - if another app already owns it, Cuebar says so and keeps the previous one
 - **Reset** restores ⌘⌥Space
 - changes apply immediately and persist across launches
+
+**Show Onboarding Again** — replay the first-run tour.
 
 ## How it works
 

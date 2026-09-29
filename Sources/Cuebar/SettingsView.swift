@@ -12,6 +12,7 @@ struct SettingsView: View {
             ScrollView {
                 VStack(spacing: 2) {
                     hotKeyRow
+                    onboardingRow
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
@@ -97,6 +98,37 @@ struct SettingsView: View {
                     .contentShape(RoundedRectangle(cornerRadius: 7))
             }
             .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+    }
+
+    private var onboardingRow: some View {
+        HStack(spacing: 12) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 7).fill(.quaternary)
+                Image(systemName: "sparkles")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Color(nsColor: .secondaryLabelColor))
+            }
+            .frame(width: 36, height: 36)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Show Onboarding Again")
+                    .font(.system(size: 15, weight: .medium))
+                Text("Replay the first-run tour")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 8)
+
+            Button("Show") { model.startOnboarding() }
+                .buttonStyle(.plain)
+                .font(.system(size: 12, weight: .medium))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)

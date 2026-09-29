@@ -7,9 +7,12 @@ struct PaletteView: View {
 
     var body: some View {
         Group {
-            if model.screen == .settings {
+            switch model.screen {
+            case .settings:
                 SettingsView(model: model)
-            } else {
+            case .onboarding:
+                OnboardingView(model: model)
+            case .search:
                 searchScreen
             }
         }

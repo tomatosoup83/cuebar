@@ -41,6 +41,12 @@ public final class LibrarySearchProvider: MusicSearchProviding, @unchecked Senda
         return albumIndex.albums
     }
 
+    /// Number of indexed playlists.
+    public var playlistCount: Int {
+        lock.lock(); defer { lock.unlock() }
+        return playlists.count
+    }
+
     /// The ordered tracks of a library album, or nil when unknown.
     public func tracks(forAlbumID id: String) -> [MusicCandidate]? {
         lock.lock(); defer { lock.unlock() }
@@ -84,7 +90,7 @@ public final class ITunesCatalogProvider: MusicSearchProviding, @unchecked Senda
 
         var request = URLRequest(url: url)
         request.timeoutInterval = 8
-        request.setValue("Cuebar/0.2 (macOS)", forHTTPHeaderField: "User-Agent")
+        request.setValue("Cuebar/0.3 (macOS)", forHTTPHeaderField: "User-Agent")
 
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {

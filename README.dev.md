@@ -93,6 +93,13 @@ macOS asks once for permission to control **Music** (System Settings › Privacy
 & Security › Automation). Until it is granted, playback and library indexing
 report a clear error.
 
+On first launch Cuebar shows a three-step **onboarding** inside the palette
+(welcome → grant access → ready): it introduces the launch hotkey, checks the
+Automation permission (with a *Grant Access* probe and an *Open System Settings*
+link), then shows the library index summary. **Esc** skips it. Completion is
+remembered in `UserDefaults`, and Settings has **Show Onboarding Again** to
+replay it (useful because ad-hoc rebuilds can reset the Automation permission).
+
 The library index is built on first launch (about 0.26 s for a 6k-track library)
 and cached at `~/Library/Application Support/Cuebar/library-index.json`, so
 later launches are instant. Use the in-app **Rebuild Library Index** command
@@ -234,6 +241,7 @@ Sources/CuebarCore/          # testable, no UI
   Toast.swift                # transient feedback model (+ per-kind duration)
   PlaybackFeedback.swift     # toast copy for playback outcomes
   ToastCenter.swift          # current toast + auto-dismiss (injectable timing)
+  OnboardingStore.swift      # first-run completion flag (UserDefaults)
   Command.swift              # Command + CommandParser
   CommandCatalog.swift       # command entries + typed matching
   CommandExecutor.swift      # applies commands to a MusicController
@@ -260,6 +268,7 @@ Sources/Cuebar/              # AppKit/SwiftUI shell
   PaletteView.swift          # Liquid Glass container
   ResultRowView.swift
   SearchScopeChip.swift      # in-field album/playlist scope chip
+  OnboardingView.swift       # first-run wizard
   ArtworkView.swift          # rounded album-art tile
   ToastView.swift            # toast content (glass)
   ToastPanel.swift           # borderless click-through toast panel
@@ -301,13 +310,14 @@ not captured, but layout, rows and text are.
 
 ## Tests
 
-`make test` runs 138 unit tests covering command parsing, command matching
+`make test` runs 144 unit tests covering command parsing, command matching
 (including that `play take on me` matches no command), now-playing parsing and
 list composition, artwork cache keys/persistence, the launch-hotkey preference
-(formatting, validation, persistence), catalog-to-library resolution (never
-substituting a same-title track by a different artist), album grouping/ordering,
-the `album`/`playlist` scope keywords, library parsing (album artist/disc/track
-and playlists), repeat modes, toast copy and auto-dismissal, ranking (the
+(formatting, validation, persistence), the onboarding flag and Automation
+permission mapping, catalog-to-library resolution (never substituting a
+same-title track by a different artist), album grouping/ordering, the
+`album`/`playlist` scope keywords, library parsing (album artist/disc/track and
+playlists), repeat modes, toast copy and auto-dismissal, ranking (the
 exact-song-over-album rule, library preference, typo tolerance, album/playlist
 preference and deterministic ordering), command execution and the
 library-first/catalog-fallback search flow.

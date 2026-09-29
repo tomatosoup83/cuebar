@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private let hotKeyManager = HotKeyManager()
     private let hotKeyStore = HotKeyStore()
+    private let onboardingStore = OnboardingStore()
     private let libraryProvider = LibrarySearchProvider()
     private let indexStore = LibraryIndexStore()
     private let libraryFetcher = AppleScriptLibraryProvider()
@@ -37,6 +38,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.onRebuildLibraryIndex = { [weak self] in
             await self?.refreshLibraryIndex()
         }
+        controller.onOnboardingComplete = { [weak self] in
+            self?.onboardingStore.complete()
+        }
+        controller.onOpenAutomationSettings = {
+            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation") {
+                NSWorkspace.shared.open(url)
+            }
+        }
         paletteController = controller
 
         hotKeyManager.onHotKey = { [weak self] in self?.paletteController?.toggle() }
@@ -47,8 +56,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         configureStatusItem()
         loadLibrary()
 
+        // First run: walk the user through opening Cuebar and granting access.
+        if !onboardingStore.hasCompleted {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                self?.paletteController?.showOnboarding()
+            }
+        }
+
 #if DEBUG
         let environment = ProcessInfo.processInfo.environment
+        if environment["CUEBAR_ONBOARD"] == "1" {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                self?.paletteController?.showOnboarding()
+            }
+        }
         if environment["CUEBAR_SHOW_ON_LAUNCH"] == "1" {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
                 guard let self else { return }
@@ -57,7 +78,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     self.paletteController?.debugSetQuery(query)
                 }
                 if let settings = environment["CUEBAR_OPEN_SETTINGS"] {
-                    self.paletteController?.debugOpenSettings(recording: settings == "recording")
+                    if settings == "onboarding" {
+                        self.paletteController?.debugOpenOnboarding()
+                    } else {
+                        self.paletteController?.debugOpenSettings(recording: settings == "recording")
+                    }
                 }
                 if environment["CUEBAR_FORCE_PLAYING"] == "1" {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in

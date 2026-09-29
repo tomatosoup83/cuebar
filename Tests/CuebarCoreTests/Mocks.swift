@@ -44,6 +44,7 @@ final class MockMusicController: MusicController, @unchecked Sendable {
     var errorToThrow: Error?
     var nowPlayingResult: NowPlayingTrack?
     var shuffleEnabledResult = false
+    var permissionResult = true
 
     var calls: [Call] {
         lock.lock(); defer { lock.unlock() }
@@ -81,5 +82,6 @@ final class MockMusicController: MusicController, @unchecked Sendable {
         return shuffleEnabledResult
     }
     func setRepeat(_ mode: RepeatMode) async throws { record(.setRepeat(mode)) }
+    func checkAutomationPermission() async -> Bool { permissionResult }
     func nowPlaying() async throws -> NowPlayingTrack? { nowPlayingResult }
 }

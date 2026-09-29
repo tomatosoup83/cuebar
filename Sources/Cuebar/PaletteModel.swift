@@ -6,6 +6,14 @@ import CuebarCore
 enum PaletteScreen: Equatable {
     case search
     case settings
+    case onboarding
+}
+
+/// Steps of the first-run onboarding wizard.
+enum OnboardingStep: Int, CaseIterable, Equatable {
+    case welcome
+    case permission
+    case ready
 }
 
 /// Presentation state for the palette.
@@ -28,11 +36,19 @@ final class PaletteModel: ObservableObject {
     @Published private(set) var isRecordingHotKey = false
     @Published private(set) var settingsMessage: String?
 
+    // Onboarding
+    @Published private(set) var onboardingStep: OnboardingStep = .welcome
+    @Published private(set) var automationGranted: Bool?
+
     var onClose: (() -> Void)?
     /// Reports playback outcomes as toasts.
     var onToast: ((Toast) -> Void)?
     /// Rebuilds the library index; returns counts, or nil on failure.
     var onRebuildLibraryIndex: (() async -> LibraryIndexSummary?)?
+    /// Persists completion of the first-run onboarding.
+    var onOnboardingComplete: (() -> Void)?
+    /// Opens the Automation section of System Settings.
+    var onOpenAutomationSettings: (() -> Void)?
     /// Applies a new hotkey; returns false when the shortcut is unavailable.
     var onHotKeyChange: ((HotKeyPreference) -> Bool)?
 
@@ -301,6 +317,68 @@ final class PaletteModel: ObservableObject {
         hotKey = preference
         isRecordingHotKey = false
         settingsMessage = nil
+    }
+
+    // MARK: - Onboarding
+
+    /// Number of indexed library tracks (for the onboarding summary).
+    var libraryTrackCount: Int { libraryProvider.count }
+    /// Number of indexed library playlists.
+    var libraryPlaylistCount: Int { libraryProvider.playlistCount }
+
+    func startOnboarding() {
+        screen = .onboarding
+        onboardingStep = .welcome
+        automationGranted = nil
+        isRecordingHotKey = false
+        settingsMessage = nil
+        requestFocus()
+    }
+
+    func advanceOnboarding() {
+        switch onboardingStep {
+        case .welcome:
+            onboardingStep = .permission
+            Task { await self.refreshAutomationPermission() }
+        case .permission:
+            onboardingStep = .ready
+        case .ready:
+            completeOnboarding()
+        }
+    }
+
+    func goBackOnboarding() {
+        switch onboardingStep {
+        case .welcome:
+            break
+        case .permission:
+            onboardingStep = .welcome
+        case .ready:
+            onboardingStep = .permission
+        }
+    }
+
+    /// Finishes onboarding and drops into the normal empty search state.
+    func completeOnboarding() {
+        onOnboardingComplete?()
+        screen = .search
+        query = ""
+        scope = nil
+        queryChanged()
+        requestFocus()
+    }
+
+    /// Runs the permission probe (raises the system prompt on first use).
+    func grantAutomationPermission() {
+        Task { await self.refreshAutomationPermission() }
+    }
+
+    func openAutomationSettings() {
+        onOpenAutomationSettings?()
+    }
+
+    private func refreshAutomationPermission() async {
+        automationGranted = await musicController.checkAutomationPermission()
     }
 
     // MARK: - Internals

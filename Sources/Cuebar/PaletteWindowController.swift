@@ -29,6 +29,10 @@ final class PaletteWindowController {
     var onHotKeyChange: ((HotKeyPreference) -> Bool)?
     /// Rebuilds the library index; returns counts, or nil on failure.
     var onRebuildLibraryIndex: (() async -> LibraryIndexSummary?)?
+    /// Persists completion of the first-run onboarding.
+    var onOnboardingComplete: (() -> Void)?
+    /// Opens System Settings › Privacy & Security › Automation.
+    var onOpenAutomationSettings: (() -> Void)?
 
     init(
         searchService: SearchService,
@@ -80,6 +84,12 @@ final class PaletteWindowController {
         model.onRebuildLibraryIndex = { [weak self] in
             await self?.onRebuildLibraryIndex?()
         }
+        model.onOnboardingComplete = { [weak self] in
+            self?.onOnboardingComplete?()
+        }
+        model.onOpenAutomationSettings = { [weak self] in
+            self?.onOpenAutomationSettings?()
+        }
 
         installKeyMonitor()
         observeResignKey()
@@ -118,6 +128,12 @@ final class PaletteWindowController {
         }
         model.requestFocus()
         startNowPlayingPolling()
+    }
+
+    /// Shows the palette on the first-run onboarding screen.
+    func showOnboarding() {
+        show()
+        model.startOnboarding()
     }
 
     func hide() {
@@ -172,6 +188,11 @@ final class PaletteWindowController {
         if recording {
             model.beginHotKeyRecording()
         }
+    }
+
+    /// Development helper: jump straight to the onboarding screen.
+    func debugOpenOnboarding() {
+        model.startOnboarding()
     }
 
     /// Development helper: render the panel's content view to a PNG.
@@ -233,6 +254,23 @@ final class PaletteWindowController {
                     return nil
                 case kVK_Return, kVK_ANSI_KeypadEnter:
                     self.model.beginHotKeyRecording()
+                    return nil
+                default:
+                    return event
+                }
+            }
+
+            // Onboarding: advance / back / skip.
+            if self.model.screen == .onboarding {
+                switch Int(event.keyCode) {
+                case kVK_Return, kVK_ANSI_KeypadEnter, kVK_RightArrow:
+                    self.model.advanceOnboarding()
+                    return nil
+                case kVK_LeftArrow:
+                    self.model.goBackOnboarding()
+                    return nil
+                case kVK_Escape:
+                    self.model.completeOnboarding()
                     return nil
                 default:
                     return event
