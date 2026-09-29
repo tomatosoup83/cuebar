@@ -15,6 +15,8 @@ public struct NowPlayingTrack: Equatable, Sendable {
     public let persistentID: String?
     public let position: Double?
     public let duration: Double?
+    public let shuffleEnabled: Bool
+    public let repeatMode: RepeatMode
 
     public init(
         state: State,
@@ -23,7 +25,9 @@ public struct NowPlayingTrack: Equatable, Sendable {
         album: String,
         persistentID: String? = nil,
         position: Double? = nil,
-        duration: Double? = nil
+        duration: Double? = nil,
+        shuffleEnabled: Bool = false,
+        repeatMode: RepeatMode = .off
     ) {
         self.state = state
         self.title = title
@@ -32,6 +36,28 @@ public struct NowPlayingTrack: Equatable, Sendable {
         self.persistentID = persistentID
         self.position = position
         self.duration = duration
+        self.shuffleEnabled = shuffleEnabled
+        self.repeatMode = repeatMode
+    }
+
+    /// A copy with selected fields replaced (used for optimistic UI updates).
+    public func copy(
+        state: State? = nil,
+        position: Double? = nil,
+        shuffleEnabled: Bool? = nil,
+        repeatMode: RepeatMode? = nil
+    ) -> NowPlayingTrack {
+        NowPlayingTrack(
+            state: state ?? self.state,
+            title: title,
+            artist: artist,
+            album: album,
+            persistentID: persistentID,
+            position: position ?? self.position,
+            duration: duration,
+            shuffleEnabled: shuffleEnabled ?? self.shuffleEnabled,
+            repeatMode: repeatMode ?? self.repeatMode
+        )
     }
 
     public var isPlaying: Bool { state == .playing }
@@ -48,7 +74,8 @@ public struct NowPlayingTrack: Equatable, Sendable {
 
     /// Decodes the script output. Returns nil when nothing is loaded.
     ///
-    /// Expected: `state <FS> title <FS> artist <FS> album <FS> id <FS> position <FS> duration`
+    /// Expected: `state <FS> title <FS> artist <FS> album <FS> id <FS> position
+    /// <FS> duration <FS> shuffle <FS> repeat` (the last two are optional).
     public static func parse(_ raw: String) -> NowPlayingTrack? {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
@@ -62,6 +89,7 @@ public struct NowPlayingTrack: Equatable, Sendable {
         guard !title.isEmpty else { return nil }
 
         let persistentID = value(fields, 4)
+        let shuffleRaw = value(fields, 7).lowercased()
 
         return NowPlayingTrack(
             state: state,
@@ -70,7 +98,9 @@ public struct NowPlayingTrack: Equatable, Sendable {
             album: value(fields, 3),
             persistentID: persistentID.isEmpty ? nil : persistentID,
             position: Double(value(fields, 5)),
-            duration: Double(value(fields, 6))
+            duration: Double(value(fields, 6)),
+            shuffleEnabled: shuffleRaw == "true" || shuffleRaw == "1",
+            repeatMode: RepeatMode(rawValue: value(fields, 8).lowercased()) ?? .off
         )
     }
 

@@ -61,6 +61,19 @@ final class PaletteModel: ObservableObject {
     private var commands: [CommandEntry] = []
     private var music: [MusicCandidate] = []
     private var nowPlaying: NowPlayingTrack?
+    /// When now-playing was last polled, for progress interpolation.
+    private(set) var lastPollDate: Date?
+    /// The scope currently being browsed (nil = not browsing).
+    private var browsePreference: RankPreference?
+
+    /// Whether the empty-scope browse list is showing.
+    var isBrowsing: Bool { browsePreference != nil }
+
+    /// Whether the selected row is the now-playing card.
+    var isNowPlayingSelected: Bool {
+        if case .nowPlaying = selectedItem { return true }
+        return false
+    }
 
     init(
         searchService: SearchService,
@@ -103,6 +116,7 @@ final class PaletteModel: ObservableObject {
     func reset() {
         query = ""
         scope = nil
+        browsePreference = nil
         searchService.clear()
         commands = []
         music = []
@@ -137,10 +151,18 @@ final class PaletteModel: ObservableObject {
         commands = scope == nil ? CommandCatalog.matches(for: trimmed) : []
 
         // Songs: only for `play <song>` or free text. A recognised non-play
-        // command shows just the command.
+        // command shows just the command. An empty scope browses that kind.
         if let term = CommandParser.searchTerm(for: CommandParser.parse(query)), !term.isEmpty {
+            browsePreference = nil
             searchService.updateQuery(SearchQuery(term: term, preference: scope ?? .songs))
+        } else if let scope, scope != .songs {
+            if browsePreference != scope {
+                browsePreference = scope
+                selectedIndex = 0
+                searchService.browse(scope)
+            }
         } else {
+            browsePreference = nil
             searchService.clear()
             music = []
         }
@@ -158,9 +180,35 @@ final class PaletteModel: ObservableObject {
     /// Refresh the current track from Music.app.
     func refreshNowPlaying() async {
         let track = try? await musicController.nowPlaying()
+        lastPollDate = Date()
         guard track != nowPlaying else { return }
         nowPlaying = track
         rebuildItems()
+    }
+
+    /// Toggles play/pause from the now-playing card (stays open).
+    func togglePlayPause() {
+        guard let track = nowPlaying else { return }
+        nowPlaying = track.copy(state: track.isPlaying ? .paused : .playing)
+        rebuildItems()
+        run(.music(track.isPlaying ? .pause : .resume), selected: nil, closeOnSuccess: false)
+    }
+
+    /// Toggles shuffle from the now-playing card.
+    func toggleShuffle() {
+        guard let track = nowPlaying else { return }
+        nowPlaying = track.copy(shuffleEnabled: !track.shuffleEnabled)
+        rebuildItems()
+        run(.music(.shuffle(.toggle)), selected: nil, closeOnSuccess: false)
+    }
+
+    /// Toggles repeat-all (off ↔ all) from the now-playing card.
+    func toggleRepeat() {
+        guard let track = nowPlaying else { return }
+        let next = track.repeatMode.togglingAll
+        nowPlaying = track.copy(repeatMode: next)
+        rebuildItems()
+        run(.music(.setRepeat(next)), selected: nil, closeOnSuccess: false)
     }
 
     func moveSelection(by delta: Int) {
@@ -183,8 +231,8 @@ final class PaletteModel: ObservableObject {
         }
 
         switch item {
-        case .nowPlaying(let track):
-            run(.music(track.isPlaying ? .pause : .resume), selected: nil)
+        case .nowPlaying:
+            togglePlayPause()
         case .command(let entry):
             run(entry.action, selected: nil)
         case .music(let candidate):
@@ -386,7 +434,8 @@ final class PaletteModel: ObservableObject {
     private func rebuildItems() {
         let newItems = PaletteListComposer.compose(
             query: query,
-            nowPlaying: nowPlaying,
+            // Browse mode is albums/playlists only — no now-playing row.
+            nowPlaying: browsePreference == nil ? nowPlaying : nil,
             commands: commands,
             music: music
         )
@@ -398,7 +447,7 @@ final class PaletteModel: ObservableObject {
         }
     }
 
-    private func run(_ action: PaletteAction, selected: MusicCandidate?) {
+    private func run(_ action: PaletteAction, selected: MusicCandidate?, closeOnSuccess: Bool = true) {
         switch action {
         case .openSettings:
             openSettings()
@@ -420,7 +469,7 @@ final class PaletteModel: ObservableObject {
                         selected: selected,
                         shuffleBefore: shuffleBefore
                     ))
-                    self.onClose?()
+                    if closeOnSuccess { self.onClose?() }
                 } catch {
                     let toast = PlaybackFeedback.failure(error)
                     self.statusMessage = toast.message

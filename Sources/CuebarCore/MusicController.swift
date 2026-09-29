@@ -177,7 +177,15 @@ public final class AppleScriptMusicController: MusicController, @unchecked Senda
         try
             set theDur to duration of t as string
         end try
-        return theState & sep & (name of t) & sep & (artist of t) & sep & (album of t) & sep & theID & sep & thePos & sep & theDur
+        set theShuffle to ""
+        try
+            set theShuffle to (shuffle enabled as string)
+        end try
+        set theRepeat to ""
+        try
+            set theRepeat to (song repeat as string)
+        end try
+        return theState & sep & (name of t) & sep & (artist of t) & sep & (album of t) & sep & theID & sep & thePos & sep & theDur & sep & theShuffle & sep & theRepeat
     end tell
     """#
 

@@ -28,8 +28,9 @@ without leaving whatever you were doing.
 - **Typo tolerant** — `blinding lites` still finds *Blinding Lights*.
 - **Transport commands** — `pause`, `resume`, `next`, `previous`, `shuffle`,
   `repeat`.
-- **Now playing** — the current track shows up at the top with an animated
-  equalizer; **Return** toggles playback.
+- **Now playing** — the current track shows up at the top in a large card with
+  artwork, a progress bar, and clickable play/pause, shuffle and repeat; **Return**
+  toggles play/pause.
 - **Album artwork**, cached on disk so it appears instantly, even offline.
 - **Configurable global hotkey**, recorded from an embedded settings screen.
 - **Keyboard-first Liquid Glass UI** — no Dock icon, no clutter.
@@ -74,7 +75,9 @@ Press **⌘⌥Space** from anywhere, then type:
 
 Typing `album` or `playlist` plus a space turns it into a scope chip in the
 search box (e.g. `[ Playlist › ]`) — the field then searches only that term in
-scope. **⌫** on an empty field, **Esc**, or clicking the chip clears it.
+scope. With the scope active and nothing typed, Cuebar shows a **random
+selection of albums/playlists to browse**; type to filter. **⌫** on an empty
+field, **Esc**, or clicking the chip clears it.
 
 `↑` / `↓` move through results, `Return` runs the selected row, `Esc` closes the
 palette. The search field supports the usual editing shortcuts (`⌘A`, `⌘C`,

@@ -81,13 +81,7 @@ struct PaletteView: View {
                 ScrollView {
                     LazyVStack(spacing: 2) {
                         ForEach(Array(model.items.enumerated()), id: \.element.id) { index, item in
-                            ResultRowView(item: item, isSelected: index == model.selectedIndex)
-                                .id(item.id)
-                                .onTapGesture { model.select(index) }
-                                .onTapGesture(count: 2) {
-                                    model.select(index)
-                                    model.executeSelection()
-                                }
+                            row(index: index, item: item)
                         }
                     }
                     .padding(.horizontal, 10)
@@ -103,8 +97,34 @@ struct PaletteView: View {
         }
     }
 
-    private var emptyState: some View {
-        VStack(spacing: 8) {
+    @ViewBuilder
+    private func row(index: Int, item: PaletteItem) -> some View {
+        if case .nowPlaying(let track) = item {
+            NowPlayingCardView(
+                track: track,
+                isSelected: index == model.selectedIndex,
+                lastPollDate: model.lastPollDate,
+                onSelect: { model.select(index) },
+                onTogglePlay: {
+                    model.select(index)
+                    model.togglePlayPause()
+                },
+                onToggleShuffle: { model.toggleShuffle() },
+                onToggleRepeat: { model.toggleRepeat() }
+            )
+            .id(item.id)
+        } else {
+            ResultRowView(item: item, isSelected: index == model.selectedIndex)
+                .id(item.id)
+                .onTapGesture { model.select(index) }
+                .onTapGesture(count: 2) {
+                    model.select(index)
+                    model.executeSelection()
+                }
+        }
+    }
+
+    private var emptyState: some View {        VStack(spacing: 8) {
             Spacer()
             if let message = model.statusMessage {
                 Image(systemName: "exclamationmark.triangle")
@@ -128,7 +148,11 @@ struct PaletteView: View {
     private var footer: some View {
         HStack(spacing: 14) {
             KeyHint(key: "↑↓", label: "navigate")
-            KeyHint(key: "⏎", label: "run")
+            if model.isNowPlayingSelected {
+                KeyHint(key: "⏎", label: "play/pause")
+            } else {
+                KeyHint(key: "⏎", label: "run")
+            }
             KeyHint(key: "esc", label: "close")
             Spacer()
             if model.isIndexing {
@@ -137,6 +161,10 @@ struct PaletteView: View {
                     .foregroundStyle(.secondary)
             } else if let term = searchTerm {
                 Text(searchLabel(for: term))
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            } else if model.isBrowsing, let scope = model.scope {
+                Text(browseLabel(for: scope))
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             } else {
@@ -159,6 +187,14 @@ struct PaletteView: View {
         case .albums: return "Searching for “\(term)” · albums first"
         case .playlists: return "Searching for “\(term)” · playlists first"
         default: return "Searching for “\(term)”"
+        }
+    }
+
+    private func browseLabel(for scope: RankPreference) -> String {
+        switch scope {
+        case .albums: return "Random albums · type to filter"
+        case .playlists: return "Random playlists · type to filter"
+        case .songs: return ""
         }
     }
 }

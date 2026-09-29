@@ -141,4 +141,45 @@ final class NowPlayingTests: XCTestCase {
         let result = try await controller.nowPlaying()
         XCTAssertEqual(result, track)
     }
+
+    // MARK: - Shuffle / repeat
+
+    func testParsesShuffleAndRepeat() {
+        let raw = ["playing", "Song", "Artist", "Album", "PID", "10", "200", "true", "all"]
+            .joined(separator: sep)
+        let parsed = NowPlayingTrack.parse(raw)
+        XCTAssertEqual(parsed?.shuffleEnabled, true)
+        XCTAssertEqual(parsed?.repeatMode, .all)
+    }
+
+    func testParsesWithoutShuffleRepeatFields() {
+        let raw = ["paused", "Song", "Artist", "Album", "PID", "10", "200"]
+            .joined(separator: sep)
+        let parsed = NowPlayingTrack.parse(raw)
+        XCTAssertEqual(parsed?.shuffleEnabled, false)
+        XCTAssertEqual(parsed?.repeatMode, .off)
+    }
+
+    func testShuffleRepeatMissingValue() {
+        let raw = ["playing", "Song", "Artist", "Album", "", "missing value", "0", "missing value", "missing value"]
+            .joined(separator: sep)
+        let parsed = NowPlayingTrack.parse(raw)
+        XCTAssertEqual(parsed?.shuffleEnabled, false)
+        XCTAssertEqual(parsed?.repeatMode, .off)
+    }
+
+    func testRepeatTogglingAll() {
+        XCTAssertEqual(RepeatMode.off.togglingAll, .all)
+        XCTAssertEqual(RepeatMode.all.togglingAll, .off)
+        XCTAssertEqual(RepeatMode.one.togglingAll, .off)
+    }
+
+    func testCopyReplacesSelectedFields() {
+        let original = NowPlayingTrack(state: .playing, title: "S", artist: "A", album: "B")
+        let paused = original.copy(state: .paused, shuffleEnabled: true)
+        XCTAssertEqual(paused.state, .paused)
+        XCTAssertEqual(paused.shuffleEnabled, true)
+        XCTAssertEqual(original.state, .playing)
+        XCTAssertEqual(original.shuffleEnabled, false)
+    }
 }

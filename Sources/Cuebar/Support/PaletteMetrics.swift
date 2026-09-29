@@ -10,4 +10,8 @@ enum PaletteMetrics {
     static let toastCornerRadius: CGFloat = 16
     static let toastMaxWidth: CGFloat = 420
     static let toastGap: CGFloat = 12
+
+    // Now-playing card
+    static let nowPlayingArtwork: CGFloat = 58
+    static let nowPlayingProgressHeight: CGFloat = 4
 }

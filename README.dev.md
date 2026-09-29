@@ -137,6 +137,10 @@ later launches are instant. Use the in-app **Rebuild Library Index** command
    keyword must be separated by whitespace (typing `album` alone stays literal);
    the catalog-fallback "strong match" check only considers songs.
 
+   With a scope active and an **empty term**, Cuebar publishes a **random browse
+   list** of that kind (`LibraryBrowse`: shuffle + cap at the result limit),
+   hiding the now-playing row. Typing switches back to ranked search.
+
 Typo tolerance is included: `blinding lites` resolves to *Blinding Lights*.
 
 ## Album playback
@@ -176,6 +180,23 @@ in the search box (`SearchScopeChip`), so the field then shows only the name.
 `PaletteModel.scope` holds a `RankPreference?`; ⌫ on an empty field, Esc, or
 clicking the chip clears it (`clearScope()`), and command rows are suppressed
 while a scope is active.
+
+## Now-playing card
+
+The current track renders as a larger card (`NowPlayingCardView`) at the top of
+an empty palette: artwork, an animated equalizer with Playing/Paused, a progress
+bar, and clickable **play/pause / shuffle / repeat** buttons. Return on the card
+still toggles play/pause, and the footer then reads **"⏎ play/pause"**.
+
+- Position/duration come from the now-playing script, which now also reads
+  `shuffle enabled` and `song repeat`. `NowPlayingProgress` interpolates the
+  position between the 1.5 s polls (frozen when paused), so the bar is smooth
+  without extra AppleScript.
+- Controls update the card optimistically, then reconcile on the next poll.
+  Repeat is a simple **off ↔ all** toggle (it shows `repeat.1` if Music is in
+  repeat-one).
+- Card controls don't close the palette; Return on an ordinary command row still
+  does.
 
 ## Feedback (toasts)
 
@@ -238,9 +259,11 @@ Sources/CuebarCore/          # testable, no UI
   SearchQuery.swift          # parses an optional leading/trailing album/playlist scope
   LibraryResolver.swift      # maps a catalog item onto a library track (title + artist only)
   LibraryAlbumIndex.swift    # groups library songs into playable albums
+  LibraryBrowse.swift        # random album/playlist list for empty scopes
   Toast.swift                # transient feedback model (+ per-kind duration)
   PlaybackFeedback.swift     # toast copy for playback outcomes
   ToastCenter.swift          # current toast + auto-dismiss (injectable timing)
+  NowPlayingProgress.swift   # interpolated progress position between polls
   OnboardingStore.swift      # first-run completion flag (UserDefaults)
   Command.swift              # Command + CommandParser
   CommandCatalog.swift       # command entries + typed matching
@@ -267,6 +290,7 @@ Sources/Cuebar/              # AppKit/SwiftUI shell
   PaletteModel.swift         # presentation state
   PaletteView.swift          # Liquid Glass container
   ResultRowView.swift
+  NowPlayingCardView.swift   # large now-playing card (progress + controls)
   SearchScopeChip.swift      # in-field album/playlist scope chip
   OnboardingView.swift       # first-run wizard
   ArtworkView.swift          # rounded album-art tile
@@ -310,12 +334,13 @@ not captured, but layout, rows and text are.
 
 ## Tests
 
-`make test` runs 144 unit tests covering command parsing, command matching
-(including that `play take on me` matches no command), now-playing parsing and
-list composition, artwork cache keys/persistence, the launch-hotkey preference
-(formatting, validation, persistence), the onboarding flag and Automation
-permission mapping, catalog-to-library resolution (never substituting a
-same-title track by a different artist), album grouping/ordering, the
+`make test` runs 163 unit tests covering command parsing, command matching
+(including that `play take on me` matches no command), now-playing parsing
+(incl. shuffle/repeat) and progress interpolation, list composition, artwork
+cache keys/persistence, the launch-hotkey preference (formatting, validation,
+persistence), the onboarding flag and Automation permission mapping,
+catalog-to-library resolution (never substituting a same-title track by a
+different artist), album grouping/ordering, scope browse lists, the
 `album`/`playlist` scope keywords, library parsing (album artist/disc/track and
 playlists), repeat modes, toast copy and auto-dismissal, ranking (the
 exact-song-over-album rule, library preference, typo tolerance, album/playlist

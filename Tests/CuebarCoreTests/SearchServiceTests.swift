@@ -122,4 +122,33 @@ final class SearchServiceTests: XCTestCase {
         try? await Task.sleep(nanoseconds: 80_000_000)
         XCTAssertEqual(service.results.first?.id, "album")
     }
+
+    func testBrowsePublishesProviderItems() async {
+        let album = MusicCandidate(
+            id: "album",
+            kind: .album,
+            source: .library,
+            title: "A",
+            artist: "",
+            album: "A"
+        )
+        let library = MockSearchProvider(
+            handler: { _, _ in [] },
+            browseHandler: { preference, _ in preference == .albums ? [album] : [] }
+        )
+        let service = SearchService(
+            libraryProvider: library,
+            catalogProvider: MockSearchProvider { _, _ in [] },
+            resultLimit: 20,
+            catalogDebounceNanoseconds: 0
+        )
+
+        service.browse(.albums)
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        XCTAssertEqual(service.results.map(\.id), ["album"])
+
+        service.browse(.playlists)
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        XCTAssertTrue(service.results.isEmpty)
+    }
 }

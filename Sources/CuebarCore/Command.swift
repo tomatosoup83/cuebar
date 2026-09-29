@@ -14,6 +14,12 @@ public enum RepeatMode: String, Equatable, Sendable {
     case one
 }
 
+public extension RepeatMode {
+    /// The result of tapping a repeat-all toggle: off ↔ all (repeat-one turns
+    /// off, since the button only toggles all).
+    var togglingAll: RepeatMode { self == .off ? .all : .off }
+}
+
 /// A parsed palette command.
 public enum Command: Equatable, Sendable {
     case play(query: String)

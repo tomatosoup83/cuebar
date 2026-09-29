@@ -115,8 +115,27 @@ public final class SearchService: ObservableObject {
         }
     }
 
-    public func clear() {
+    /// Publishes a random list of a kind's items for the empty-scope browse mode.
+    public func browse(_ preference: RankPreference) {
+        guard preference != .songs else {
+            clear()
+            return
+        }
+
         searchTask?.cancel()
+        currentQuery = nil
+        statusMessage = nil
+        isSearching = false
+
+        searchTask = Task { [weak self] in
+            guard let self else { return }
+            let items = await self.libraryProvider.browse(preference, limit: self.resultLimit)
+            if Task.isCancelled { return }
+            self.results = items
+        }
+    }
+
+    public func clear() {        searchTask?.cancel()
         searchTask = nil
         currentQuery = nil
         results = []

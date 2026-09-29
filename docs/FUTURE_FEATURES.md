@@ -30,8 +30,6 @@ actually verified about `Music.app`:
   (`year`, `genre`, `date added`, `rating` are in the dictionary; needs index v4).
 - **Recently played / most played** — index `played date` / `played count`;
   commands `recent` and `top`.
-- **Browse mode** — with a scope active and an empty term (`playlist ` / `album `),
-  list all albums/playlists instead of "No matches".
 - **"play <song> by <artist>"** — parse an explicit artist to disambiguate.
 
 ## Nice, medium effort (✅ / ⚠️)

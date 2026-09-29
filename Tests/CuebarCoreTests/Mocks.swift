@@ -3,11 +3,16 @@ import CuebarCore
 
 final class MockSearchProvider: MusicSearchProviding, @unchecked Sendable {
     private let handler: @Sendable (String, Int) async throws -> [MusicCandidate]
+    private let browseHandler: @Sendable (RankPreference, Int) async -> [MusicCandidate]
     private let lock = NSLock()
     private var recordedQueries: [String] = []
 
-    init(handler: @escaping @Sendable (String, Int) async throws -> [MusicCandidate]) {
+    init(
+        handler: @escaping @Sendable (String, Int) async throws -> [MusicCandidate],
+        browseHandler: @escaping @Sendable (RankPreference, Int) async -> [MusicCandidate] = { _, _ in [] }
+    ) {
         self.handler = handler
+        self.browseHandler = browseHandler
     }
 
     convenience init(results: [MusicCandidate]) {
@@ -22,6 +27,10 @@ final class MockSearchProvider: MusicSearchProviding, @unchecked Sendable {
     func search(_ query: String, limit: Int) async throws -> [MusicCandidate] {
         lock.lock(); recordedQueries.append(query); lock.unlock()
         return try await handler(query, limit)
+    }
+
+    func browse(_ preference: RankPreference, limit: Int) async -> [MusicCandidate] {
+        await browseHandler(preference, limit)
     }
 }
 

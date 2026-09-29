@@ -3,6 +3,13 @@ import Foundation
 /// A source of search results.
 public protocol MusicSearchProviding: Sendable {
     func search(_ query: String, limit: Int) async throws -> [MusicCandidate]
+    /// A random list of a kind's items, for the empty-scope browse mode.
+    func browse(_ preference: RankPreference, limit: Int) async -> [MusicCandidate]
+}
+
+public extension MusicSearchProviding {
+    /// Sources without a local catalogue (e.g. the iTunes API) browse to nothing.
+    func browse(_ preference: RankPreference, limit: Int) async -> [MusicCandidate] { [] }
 }
 
 /// Searches the in-memory library index. Local and effectively instant.
@@ -57,10 +64,25 @@ public final class LibrarySearchProvider: MusicSearchProviding, @unchecked Senda
         Ranking.rank(searchPool(), query: query, limit: limit)
     }
 
+    public func browse(_ preference: RankPreference, limit: Int) async -> [MusicCandidate] {
+        let pool = browsePool()
+        return LibraryBrowse.items(
+            albums: pool.albums,
+            playlists: pool.playlists,
+            preference: preference,
+            limit: limit
+        )
+    }
+
     /// Songs + derived album rows + playlists, copied under the lock.
     private func searchPool() -> [MusicCandidate] {
         lock.lock(); defer { lock.unlock() }
         return tracks + albumIndex.albums + playlists
+    }
+
+    private func browsePool() -> (albums: [MusicCandidate], playlists: [MusicCandidate]) {
+        lock.lock(); defer { lock.unlock() }
+        return (albumIndex.albums, playlists)
     }
 }
 
@@ -90,7 +112,7 @@ public final class ITunesCatalogProvider: MusicSearchProviding, @unchecked Senda
 
         var request = URLRequest(url: url)
         request.timeoutInterval = 8
-        request.setValue("Cuebar/0.3 (macOS)", forHTTPHeaderField: "User-Agent")
+        request.setValue("Cuebar/0.4 (macOS)", forHTTPHeaderField: "User-Agent")
 
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
