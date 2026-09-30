@@ -6,7 +6,7 @@ import CuebarCore
 /// Mirrors the capsules used for result badges so the scope reads as a filter.
 /// Clicking it clears the scope.
 struct SearchScopeChip: View {
-    let scope: RankPreference
+    let scope: SearchScope
     let onClear: () -> Void
 
     var body: some View {
@@ -29,19 +29,6 @@ struct SearchScopeChip: View {
         .accessibilityHint("Activate to clear")
     }
 
-    private var title: String {
-        switch scope {
-        case .albums: return "Album"
-        case .playlists: return "Playlist"
-        case .songs: return "Songs"
-        }
-    }
-
-    private var symbolName: String {
-        switch scope {
-        case .albums: return "rectangle.stack"
-        case .playlists: return "music.note.list"
-        case .songs: return "music.note"
-        }
-    }
+    private var title: String { scope.title }
+    private var symbolName: String { scope.symbolName }
 }

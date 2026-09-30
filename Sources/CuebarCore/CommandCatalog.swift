@@ -10,6 +10,10 @@ public enum PaletteAction: Equatable, Sendable {
     case rebuildLibraryIndex
     /// Download and install an available update.
     case installUpdate
+    /// Switch the panel theme.
+    case setTheme(ThemeID)
+    /// Turn the "ambient follows the highlighted row" option on or off.
+    case setFollowsSelection(Bool)
 }
 
 /// A user-facing row that is not a song: a command or an app action.
@@ -25,6 +29,8 @@ public struct CommandEntry: Identifiable, Equatable, Sendable {
     /// are replaced by the now-playing card (pause/resume) hide by default but
     /// still match when typed.
     public let showsByDefault: Bool
+    /// The trailing badge for this row, e.g. "Command" or "Theme".
+    public let badge: String
 
     public init(
         id: String,
@@ -33,7 +39,8 @@ public struct CommandEntry: Identifiable, Equatable, Sendable {
         symbolName: String,
         action: PaletteAction,
         keywords: [String],
-        showsByDefault: Bool = true
+        showsByDefault: Bool = true,
+        badge: String = "Command"
     ) {
         self.id = id
         self.title = title
@@ -42,6 +49,7 @@ public struct CommandEntry: Identifiable, Equatable, Sendable {
         self.action = action
         self.keywords = keywords
         self.showsByDefault = showsByDefault
+        self.badge = badge
     }
 }
 

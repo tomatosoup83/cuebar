@@ -39,6 +39,11 @@ public final class UpdateChecker: @unchecked Sendable {
         string: "https://api.github.com/repos/tomatosoup83/cuebar/releases/latest"
     )!
 
+    /// The human-facing page for the latest release.
+    public static let defaultReleasePageURL = URL(
+        string: "https://github.com/tomatosoup83/cuebar/releases/latest"
+    )!
+
     private let apiURL: URL
     private let assetName: String
     private let signatureName: String

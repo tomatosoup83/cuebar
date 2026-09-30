@@ -4,6 +4,7 @@ import CuebarCore
 struct PaletteView: View {
     @ObservedObject var model: PaletteModel
     @FocusState private var isFieldFocused: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Group {
@@ -14,17 +15,36 @@ struct PaletteView: View {
                 OnboardingView(model: model)
             case .search:
                 searchScreen
+            case .whatsNew:
+                WhatsNewView(model: model)
             }
         }
         .frame(width: PaletteMetrics.panelSize.width,
                height: PaletteMetrics.panelSize.height)
         .glassEffect(
-            .regular,
+            ThemeGlass.style(
+                theme: model.theme,
+                palette: model.ambientPalette,
+                followsSelection: model.ambientFollowsSelection
+            ),
             in: RoundedRectangle(cornerRadius: PaletteMetrics.cornerRadius, style: .continuous)
         )
+        // The wash sits *behind* the glass so the glass samples the album colour
+        // instead of the desktop.
+        .background {
+            ThemeBackground(
+                theme: model.theme,
+                palette: model.ambientPalette,
+                followsSelection: model.ambientFollowsSelection
+            )
+        }
         .clipShape(
             RoundedRectangle(cornerRadius: PaletteMetrics.cornerRadius, style: .continuous)
         )
+        // A deliberate fade, so a whole-panel hue change reads as a transition
+        // rather than a jump. Reduce Motion swaps instantly.
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.7), value: model.ambientPalette)
+        .animation(.easeInOut(duration: 0.3), value: model.theme)
         .onChange(of: model.query) { _, _ in model.queryChanged() }
         .onChange(of: model.focusToken) { _, _ in isFieldFocused = true }
         .onAppear { isFieldFocused = true }
@@ -68,6 +88,7 @@ struct PaletteView: View {
         switch model.scope {
         case .albums: return "Album name…"
         case .playlists: return "Playlist name…"
+        case .themes: return "Filter themes…"
         default: return "Play a song or type a command…"
         }
     }
@@ -104,6 +125,7 @@ struct PaletteView: View {
                 track: track,
                 isSelected: index == model.selectedIndex,
                 lastPollDate: model.lastPollDate,
+                accent: tintAccent(for: item, at: index),
                 onSelect: { model.select(index) },
                 onTogglePlay: {
                     model.select(index)
@@ -114,14 +136,33 @@ struct PaletteView: View {
             )
             .id(item.id)
         } else {
-            ResultRowView(item: item, isSelected: index == model.selectedIndex)
-                .id(item.id)
-                .onTapGesture { model.select(index) }
-                .onTapGesture(count: 2) {
-                    model.select(index)
-                    model.executeSelection()
-                }
+            ResultRowView(
+                item: item,
+                isSelected: index == model.selectedIndex,
+                accent: tintAccent(for: item, at: index)
+            )
+            .id(item.id)
+            .onTapGesture { model.select(index) }
+            .onTapGesture(count: 2) {
+                model.select(index)
+                model.executeSelection()
+            }
         }
+    }
+
+    /// The album tint for a row.
+    ///
+    /// `RowTintPolicy` allows it for the now-playing row always, and for any row
+    /// once the user opts into following the highlighted row — so the row and the
+    /// ambient background agree.
+    private func tintAccent(for item: PaletteItem, at index: Int) -> AlbumPalette? {
+        guard RowTintPolicy.allowsTint(
+            for: item,
+            followsSelection: model.ambientFollowsSelection
+        ), index == model.selectedIndex else {
+            return nil
+        }
+        return model.rowAccent
     }
 
     private var emptyState: some View {        VStack(spacing: 8) {
@@ -190,11 +231,11 @@ struct PaletteView: View {
         }
     }
 
-    private func browseLabel(for scope: RankPreference) -> String {
+    private func browseLabel(for scope: SearchScope) -> String {
         switch scope {
         case .albums: return "Random albums · type to filter"
         case .playlists: return "Random playlists · type to filter"
-        case .songs: return ""
+        case .themes: return ""
         }
     }
 }

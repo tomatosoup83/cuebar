@@ -112,7 +112,7 @@ public final class ITunesCatalogProvider: MusicSearchProviding, @unchecked Senda
 
         var request = URLRequest(url: url)
         request.timeoutInterval = 8
-        request.setValue("Cuebar/0.5 (macOS)", forHTTPHeaderField: "User-Agent")
+        request.setValue("Cuebar/0.6 (macOS)", forHTTPHeaderField: "User-Agent")
 
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {

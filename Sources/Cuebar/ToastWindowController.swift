@@ -11,6 +11,9 @@ final class ToastWindowController {
     private let hostingView: NSHostingView<ToastView>
     private var cancellables = Set<AnyCancellable>()
 
+    /// Supplies the current theme + ambient palette so toasts match the panel.
+    var themeProvider: (@MainActor () -> (theme: ThemeID, palette: AlbumPalette?))?
+
     /// The palette frame to anchor below, captured when the toast is requested.
     private var anchorFrame: NSRect?
 
@@ -45,7 +48,8 @@ final class ToastWindowController {
     // MARK: - Panel
 
     private func present(_ toast: Toast) {
-        hostingView.rootView = ToastView(toast: toast)
+        let style = themeProvider?() ?? (.tahoe, nil)
+        hostingView.rootView = ToastView(toast: toast, theme: style.theme, palette: style.palette)
 
         let size = hostingView.fittingSize
         panel.setContentSize(size)

@@ -1,5 +1,6 @@
 import AppKit
 import Carbon.HIToolbox
+import Combine
 import SwiftUI
 import CuebarCore
 
@@ -20,9 +21,16 @@ final class PaletteWindowController {
     private let panel: PalettePanel
     private let model: PaletteModel
     private let toastController: ToastWindowController
+    private let ambientCoordinator = AmbientPaletteCoordinator(
+        resolve: { await PaletteCache.shared.palette(for: $0) }
+    )
+    private var cancellables = Set<AnyCancellable>()
     private var keyMonitor: Any?
     private weak var previousApplication: NSRunningApplication?
     private var isHiding = false
+    /// Set while an AppKit menu is tracking, so the key monitor stands down and
+    /// lets the menu handle its own arrows and Return.
+    private var isMenuTracking = false
     private var nowPlayingTask: Task<Void, Never>?
 
     /// Applies a new hotkey; returns false when the shortcut is unavailable.
@@ -37,18 +45,28 @@ final class PaletteWindowController {
     var onCheckForUpdates: (() -> Void)?
     /// Downloads and installs the available update.
     var onInstallUpdate: (() -> Void)?
+    /// Persists a newly chosen theme.
+    var onThemeChange: ((ThemeID) -> Void)?
+    /// Persists the "ambient follows the highlighted row" option.
+    var onAmbientFollowsSelectionChange: ((Bool) -> Void)?
+    /// Called when the What's New screen is presented.
+    var onWhatsNewShown: (() -> Void)?
 
     init(
         searchService: SearchService,
         musicController: MusicController,
         libraryProvider: LibrarySearchProvider,
-        hotKey: HotKeyPreference = .default
+        hotKey: HotKeyPreference = .default,
+        theme: ThemeID = .tahoe,
+        ambientFollowsSelection: Bool = false
     ) {
         model = PaletteModel(
             searchService: searchService,
             musicController: musicController,
             libraryProvider: libraryProvider,
-            hotKey: hotKey
+            hotKey: hotKey,
+            theme: theme,
+            ambientFollowsSelection: ambientFollowsSelection
         )
 
         let rect = NSRect(origin: .zero, size: PaletteMetrics.panelSize)
@@ -99,6 +117,32 @@ final class PaletteWindowController {
         }
         model.onInstallUpdate = { [weak self] in
             self?.onInstallUpdate?()
+        }
+        model.onThemeChange = { [weak self] theme in
+            guard let self else { return }
+            self.onThemeChange?(theme)
+            self.ambientCoordinator.setEnabled(theme == .albumArt)
+        }
+        model.onAmbientFollowsSelectionChange = { [weak self] follows in
+            guard let self else { return }
+            self.onAmbientFollowsSelectionChange?(follows)
+            self.ambientCoordinator.setFollowsSelection(follows)
+        }
+        model.onSelectionChange = { [weak self] item in
+            self?.ambientCoordinator.update(selection: item)
+        }
+        model.onOpenThemeMenu = { [weak self] in self?.showThemeMenu() }
+        model.onWhatsNewShown = { [weak self] in self?.onWhatsNewShown?() }
+        ambientCoordinator.setEnabled(theme == .albumArt)
+        ambientCoordinator.setFollowsSelection(ambientFollowsSelection)
+        ambientCoordinator.$palette
+            .sink { [weak self] palette in
+                self?.model.setAmbientPalette(palette)
+            }
+            .store(in: &cancellables)
+        toastController.themeProvider = { [weak self] in
+            guard let self else { return (.tahoe, nil) }
+            return (self.model.theme, self.ambientCoordinator.palette)
         }
 
         installKeyMonitor()
@@ -176,18 +220,68 @@ final class PaletteWindowController {
         stopNowPlayingPolling()
         nowPlayingTask = Task { [weak self] in
             guard let self else { return }
-            await self.model.refreshNowPlaying()
+            await self.refreshNowPlaying()
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 1_500_000_000)
                 if Task.isCancelled { break }
-                await self.model.refreshNowPlaying()
+                await self.refreshNowPlaying()
             }
         }
+    }
+
+    /// Refreshes the now-playing card and the ambient album palette together.
+    private func refreshNowPlaying() async {
+        await model.refreshNowPlaying()
+        ambientCoordinator.update(nowPlaying: model.currentTrack)
     }
 
     private func stopNowPlayingPolling() {
         nowPlayingTask?.cancel()
         nowPlayingTask = nil
+    }
+
+    /// Shows What's New (from the launch check or Settings).
+    func showWhatsNew() {
+        show()
+        model.startWhatsNew()
+    }
+
+    /// Pops the Theme dropdown at the Theme row.
+    ///
+    /// An `NSMenu` rather than a SwiftUI control: inside a borderless,
+    /// non-activating panel it is the only thing that gives real dropdown
+    /// behaviour — arrows to move, Return to choose, Esc to cancel.
+    private func showThemeMenu() {
+        guard let container = panel.contentView else { return }
+        let rect = model.themeRowFrame
+
+        let menu = NSMenu()
+        for theme in ThemeID.allCases {
+            let item = NSMenuItem(
+                title: theme.title,
+                action: #selector(selectThemeFromMenu(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = theme.rawValue
+            item.state = theme == model.theme ? .on : .off
+            menu.addItem(item)
+        }
+
+        // SwiftUI's coordinate space shares the hosting view, so only the y axis
+        // needs flipping into AppKit's bottom-left origin. Point at the row's
+        // bottom edge so the menu drops below it.
+        let point = NSPoint(x: rect.minX, y: container.bounds.height - rect.maxY)
+
+        isMenuTracking = true
+        menu.popUp(positioning: nil, at: point, in: container)
+        isMenuTracking = false
+    }
+
+    @objc private func selectThemeFromMenu(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let theme = ThemeID(rawValue: raw) else { return }
+        model.setTheme(theme)
     }
 
 #if DEBUG
@@ -213,6 +307,106 @@ final class PaletteWindowController {
     /// Development helper: jump straight to the onboarding screen.
     func debugOpenOnboarding() {
         model.startOnboarding()
+    }
+
+    /// Development helper: select a theme.
+    ///
+    /// The ambient palette is no longer forced here — `AmbientPaletteCoordinator`
+    /// resolves it from real artwork, so forcing it would mask the real behaviour.
+    func debugSetTheme(_ theme: ThemeID) {
+        model.setTheme(theme)
+    }
+
+    private static func describe(_ color: ThemeColor) -> String {
+        String(
+            format: "rgb(%.2f,%.2f,%.2f) luma %.2f bright %.2f chroma %.2f",
+            color.red, color.green, color.blue, color.luma, color.brightness, color.chroma
+        )
+    }
+
+    /// Development helper: render the now-playing card on the default screen,
+    /// with a real-looking accent, without Music loaded.
+    func debugShowFakeNowPlaying() {
+        model.debugSetNowPlaying(
+            NowPlayingTrack(
+                state: .playing,
+                title: "IGOR'S THEME",
+                artist: "Tyler, The Creator",
+                album: "IGOR",
+                persistentID: "FAKE",
+                position: 42,
+                duration: 187
+            )
+        )
+        Task { [weak self] in
+            // Wait out the real (empty) accent resolution, then force one.
+            try? await Task.sleep(nanoseconds: 900_000_000)
+            self?.model.debugSetRowAccent(
+                AlbumPalette(
+                    top: ThemeColor(red: 0.84, green: 0.63, blue: 0.69),
+                    bottom: ThemeColor(red: 0.81, green: 0.65, blue: 0.70),
+                    accent: ThemeColor(red: 0.96, green: 0.68, blue: 0.77),
+                    selection: ThemeColor(red: 0.82, green: 0.32, blue: 0.47)
+                )
+            )
+        }
+    }
+
+    /// Development helper: turn the "ambient follows the highlighted row" option
+    /// on or off.
+    func debugSetFollowsSelection(_ follows: Bool) {
+        model.setFollowsSelection(follows)
+    }
+
+    /// Development helper: step the selection rapidly then stop, and report whether
+    /// the ambient colour ended up on the row that is actually selected. This is
+    /// the deterministic reproduction of "cycle fast, stop, and the colour doesn't
+    /// catch up / belongs to the wrong album".
+    func debugCycleTest(steps: Int, stepMilliseconds: Int) {
+        Task { [weak self] in
+            guard let self else { return }
+            // Let the results settle first.
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+
+            for _ in 0 ..< steps {
+                self.model.moveSelection(by: 1)
+                try? await Task.sleep(
+                    nanoseconds: UInt64(stepMilliseconds) * 1_000_000
+                )
+            }
+
+            // Stopped moving: give it a generous moment to settle (a cold album's
+            // artwork lookup scans the whole library), then check.
+            try? await Task.sleep(nanoseconds: 6_000_000_000)
+            let wanted = self.model.selectedItem?.artworkSource?.cacheKey ?? "-"
+            let shown = self.ambientCoordinator.debugPublishedKey ?? "-"
+            let desired = self.ambientCoordinator.debugDesiredKey ?? "-"
+            NSLog("Cuebar: cycle test steps=\(steps) stepMs=\(stepMilliseconds) "
+                  + "end=\((self.model.selectedItem?.id) ?? "-") "
+                  + "wanted=\(wanted) desired=\(desired) shown=\(shown) "
+                  + "match=\(wanted == shown)")
+        }
+    }
+
+    /// Development helper: log the extracted palettes for the first few album
+    /// rows, so the tuning can be judged across a spread of real covers.
+    func debugDumpPalettes(count: Int = 10) {
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            guard let self else { return }
+            var logged = 0
+            for item in self.model.items {
+                guard logged < count,
+                      case .music(let candidate) = item,
+                      candidate.kind == .album,
+                      let source = item.artworkSource else { continue }
+                guard let palette = await PaletteCache.shared.palette(for: source) else { continue }
+                NSLog("Cuebar: dump album=\"\(candidate.title)\" usable=\(palette.isUsable) "
+                      + "top=\(Self.describe(palette.top)) accent=\(Self.describe(palette.accent))")
+                logged += 1
+            }
+            NSLog("Cuebar: dumped \(logged) album palettes")
+        }
     }
 
     /// Development helper: render the panel's content view to a PNG.
@@ -255,6 +449,8 @@ final class PaletteWindowController {
     private func installKeyMonitor() {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, self.panel.isKeyWindow else { return event }
+            // An open dropdown owns the keyboard.
+            guard !self.isMenuTracking else { return event }
 
             // Recording a new hotkey: capture the next key combination.
             if self.model.isRecordingHotKey {
@@ -266,14 +462,33 @@ final class PaletteWindowController {
                 return nil
             }
 
-            // Settings screen: back and record only.
+            // Settings: move between rows like the results list, ⏎ runs the row.
             if self.model.screen == .settings {
                 switch Int(event.keyCode) {
                 case kVK_Escape:
                     self.model.closeSettings()
                     return nil
+                case kVK_UpArrow:
+                    self.model.moveSettingsSelection(by: -1)
+                    return nil
+                case kVK_DownArrow:
+                    self.model.moveSettingsSelection(by: 1)
+                    return nil
                 case kVK_Return, kVK_ANSI_KeypadEnter:
-                    self.model.beginHotKeyRecording()
+                    self.model.activateSettingsRow()
+                    return nil
+                default:
+                    return event
+                }
+            }
+
+            // What's New: any dismiss key closes it.
+            if self.model.screen == .whatsNew {
+                switch Int(event.keyCode) {
+                case kVK_Escape, kVK_Return, kVK_ANSI_KeypadEnter:
+                    self.model.closeWhatsNew()
+                    return nil
+                case kVK_UpArrow, kVK_DownArrow:
                     return nil
                 default:
                     return event

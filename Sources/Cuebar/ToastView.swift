@@ -4,6 +4,9 @@ import CuebarCore
 /// The toast content: an icon, a message and optional detail, on Liquid Glass.
 struct ToastView: View {
     let toast: Toast
+    /// The active theme, so a toast matches the panel behind it.
+    var theme: ThemeID = .tahoe
+    var palette: AlbumPalette?
 
     var body: some View {
         HStack(spacing: 10) {
@@ -29,12 +32,16 @@ struct ToastView: View {
         .padding(.vertical, 10)
         .frame(maxWidth: PaletteMetrics.toastMaxWidth, alignment: .leading)
         .glassEffect(
-            .regular,
+            ThemeGlass.style(theme: theme, palette: palette, followsSelection: false),
             in: RoundedRectangle(cornerRadius: PaletteMetrics.toastCornerRadius, style: .continuous)
         )
+        .background {
+            ThemeBackground(theme: theme, palette: palette)
+        }
         .clipShape(
             RoundedRectangle(cornerRadius: PaletteMetrics.toastCornerRadius, style: .continuous)
         )
+        .animation(.easeInOut(duration: 0.4), value: palette)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityText)
     }

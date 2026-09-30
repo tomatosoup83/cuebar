@@ -55,9 +55,16 @@ fi
 git push origin HEAD
 
 echo "==> Creating GitHub release v$VERSION"
-gh release create "v$VERSION" build/Cuebar.zip build/Cuebar.zip.sig \
-    --title "Cuebar v$VERSION" \
-    --notes "Cuebar $VERSION. See the repository for details."
+# Prefer curated notes when they exist, so the release page says the same thing
+# the in-app What's New screen does.
+NOTES_FILE="docs/releases/$VERSION.md"
+if [ -f "$NOTES_FILE" ]; then
+    gh release create "v$VERSION" build/Cuebar.zip build/Cuebar.zip.sig \
+        --title "Cuebar v$VERSION" --notes-file "$NOTES_FILE"
+else
+    gh release create "v$VERSION" build/Cuebar.zip build/Cuebar.zip.sig \
+        --title "Cuebar v$VERSION" --notes "Cuebar $VERSION. See the repository for details."
+fi
 
 echo
 echo "Done: released v$VERSION"

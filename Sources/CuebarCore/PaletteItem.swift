@@ -17,6 +17,44 @@ public enum PaletteItem: Identifiable, Equatable, Sendable {
             return "music:\(candidate.id)"
         }
     }
+
+    /// The artwork this row shows, if any. Commands have none.
+    ///
+    /// Single source of truth: both the row icon and the Album Art theme read
+    /// this, so they can never disagree about which cover a row belongs to.
+    public var artworkSource: ArtworkSource? {
+        switch self {
+        case .nowPlaying(let track):
+            return .nowPlaying(
+                persistentID: track.persistentID,
+                artist: track.artist,
+                album: track.album,
+                title: track.title
+            )
+
+        case .command:
+            return nil
+
+        case .music(let candidate):
+            switch candidate.source {
+            case .library:
+                // A playlist's `persistentID` is the playlist itself, not a
+                // track, so use its representative track for artwork.
+                let trackID = candidate.kind == .playlist
+                    ? candidate.artworkTrackID
+                    : (candidate.persistentID ?? candidate.artworkTrackID)
+                guard let trackID else { return nil }
+                return .library(
+                    persistentID: trackID,
+                    artist: candidate.artist,
+                    album: candidate.album
+                )
+            case .catalog:
+                guard let url = candidate.artworkURL else { return nil }
+                return .remote(url)
+            }
+        }
+    }
 }
 
 /// Builds the displayed list.

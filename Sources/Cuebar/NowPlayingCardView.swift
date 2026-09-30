@@ -6,6 +6,8 @@ struct NowPlayingCardView: View {
     let track: NowPlayingTrack
     let isSelected: Bool
     let lastPollDate: Date?
+    /// The card's own album palette, when the Album Art theme is active.
+    var accent: AlbumPalette?
     let onSelect: () -> Void
     let onTogglePlay: () -> Void
     let onToggleShuffle: () -> Void
@@ -18,12 +20,42 @@ struct NowPlayingCardView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(
-            isSelected ? AnyShapeStyle(.selection) : AnyShapeStyle(Color.clear),
-            in: RoundedRectangle(cornerRadius: 10)
-        )
+        .background { selectionBackground }
         .contentShape(RoundedRectangle(cornerRadius: 10))
         .onTapGesture(perform: onSelect)
+    }
+
+    /// The same translucent treatment as an ordinary row, so the card still reads
+    /// as glass when it is the selected item.
+    @ViewBuilder
+    private var selectionBackground: some View {
+        if isSelected {
+            let shape = RoundedRectangle(cornerRadius: 10)
+            shape
+                .fill(.selection)
+                .overlay {
+                    if let accent {
+                        shape.fill(
+                            Color(themeColor: accent.selection)
+                                .opacity(ThemeGlass.rowTintOpacity)
+                        )
+                    }
+                }
+                .overlay {
+                    if accent != nil {
+                        shape.strokeBorder(
+                            LinearGradient(
+                                colors: [.white.opacity(0.34), .white.opacity(0.04)],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            ),
+                            lineWidth: 0.5
+                        )
+                    }
+                }
+        } else {
+            Color.clear
+        }
     }
 
     private var header: some View {

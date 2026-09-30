@@ -12,6 +12,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let hotKeyManager = HotKeyManager()
     private let hotKeyStore = HotKeyStore()
     private let onboardingStore = OnboardingStore()
+    private let themeStore = ThemeStore()
+    private let whatsNewStore = WhatsNewStore()
     private let updateController = UpdateController()
     private var cancellables = Set<AnyCancellable>()
     private let libraryProvider = LibrarySearchProvider()
@@ -21,6 +23,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var searchService: SearchService?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+#if DEBUG
+        // For verifying the theming against a dark appearance.
+        if ProcessInfo.processInfo.environment["CUEBAR_DARK"] == "1" {
+            NSApp.appearance = NSAppearance(named: .darkAqua)
+        }
+#endif
         let searchService = SearchService(
             libraryProvider: libraryProvider,
             catalogProvider: ITunesCatalogProvider()
@@ -33,7 +41,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             searchService: searchService,
             musicController: musicController,
             libraryProvider: libraryProvider,
-            hotKey: preference
+            hotKey: preference,
+            theme: themeStore.theme,
+            ambientFollowsSelection: themeStore.ambientFollowsSelection
         )
         controller.onHotKeyChange = { [weak self] newPreference in
             self?.applyHotKey(newPreference) ?? false
@@ -54,6 +64,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         controller.onInstallUpdate = { [weak self] in
             self?.updateController.install()
+        }
+        controller.onThemeChange = { [weak self] theme in
+            self?.themeStore.theme = theme
+        }
+        controller.onWhatsNewShown = { [weak self] in
+            self?.whatsNewStore.lastSeenVersion = AppVersion.current()?.description
+        }
+        controller.onAmbientFollowsSelectionChange = { [weak self] follows in
+            self?.themeStore.ambientFollowsSelection = follows
         }
         updateController.onToast = { [weak self] toast in
             self?.paletteController?.presentToast(toast)
@@ -80,6 +99,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
+        // An upgrade (not a fresh install — onboarding tells them apart) shows
+        // what changed since the version they were running.
+        announceWhatsNewIfNeeded()
+
         // Quiet update check a few seconds in (only when enabled).
         DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
             self?.updateController.checkIfEnabled()
@@ -87,6 +110,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 #if DEBUG
         let environment = ProcessInfo.processInfo.environment
+        // Set before anything renders: the wash strength is a plain static.
+        if let raw = environment["CUEBAR_WASH_OPACITY"], let value = Double(raw) {
+            ThemeBackground.washOpacity = value
+        }
+        if let raw = environment["CUEBAR_GLASS_TINT"], let value = Double(raw) {
+            ThemeGlass.tintOpacity = value
+        }
+        if let raw = environment["CUEBAR_ROW_TINT"], let value = Double(raw) {
+            ThemeGlass.rowTintOpacity = value
+        }
+        if let raw = environment["CUEBAR_DARK_COVER"], raw == "1" {
+            PaletteExtractor.debugForceDarkPanel = true
+        }
         if environment["CUEBAR_ONBOARD"] == "1" {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
                 self?.paletteController?.showOnboarding()
@@ -111,6 +147,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         self?.paletteController?.debugForcePlaying()
                     }
                 }
+                if let theme = environment["CUEBAR_THEME"] {
+                    self.paletteController?.debugSetTheme(theme == "albumart" ? .albumArt : .tahoe)
+                }
+                if let count = environment["CUEBAR_DUMP_PALETTES"], let value = Int(count) {
+                    self.paletteController?.debugDumpPalettes(count: value)
+                }
+                if environment["CUEBAR_FAKE_NOWPLAYING"] == "1" {
+                    self.paletteController?.debugShowFakeNowPlaying()
+                }
+                if let raw = environment["CUEBAR_FOLLOW_SELECTION"] {
+                    self.paletteController?.debugSetFollowsSelection(raw == "1")
+                }
+                if let raw = environment["CUEBAR_CYCLE_TEST"], let stepMs = Int(raw) {
+                    self.paletteController?.debugCycleTest(steps: 10, stepMilliseconds: stepMs)
+                }
                 if let path = environment["CUEBAR_SNAPSHOT"] {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
                         self.paletteController?.debugSnapshot(to: path)
@@ -128,6 +179,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     // MARK: - Library index
+
+    /// Shows What's New once per version, to people who were already using Cuebar.
+    private func announceWhatsNewIfNeeded() {
+        guard onboardingStore.hasCompleted,
+              let version = AppVersion.current()?.description,
+              whatsNewStore.shouldShow(for: version),
+              !WhatsNew.highlights(for: version).isEmpty else { return }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+            self?.paletteController?.showWhatsNew()
+        }
+    }
 
     private func loadLibrary() {
         if let cached = indexStore.loadCached() {

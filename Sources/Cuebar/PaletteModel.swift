@@ -7,6 +7,7 @@ enum PaletteScreen: Equatable {
     case search
     case settings
     case onboarding
+    case whatsNew
 }
 
 /// Steps of the first-run onboarding wizard.
@@ -20,8 +21,8 @@ enum OnboardingStep: Int, CaseIterable, Equatable {
 @MainActor
 final class PaletteModel: ObservableObject {
     @Published var query: String = ""
-    /// Active `album`/`playlist` scope (nil = plain search).
-    @Published private(set) var scope: RankPreference?
+    /// Active in-field scope (nil = plain search).
+    @Published private(set) var scope: SearchScope?
     @Published private(set) var items: [PaletteItem] = []
     @Published private(set) var selectedIndex: Int = 0
     @Published private(set) var statusMessage: String?
@@ -32,6 +33,8 @@ final class PaletteModel: ObservableObject {
 
     // Settings
     @Published private(set) var screen: PaletteScreen = .search
+    /// Highlighted Settings row; navigated with ↑/↓.
+    @Published private(set) var settingsSelection: Int = 0
     @Published private(set) var hotKey: HotKeyPreference
     @Published private(set) var isRecordingHotKey = false
     @Published private(set) var settingsMessage: String?
@@ -42,6 +45,15 @@ final class PaletteModel: ObservableObject {
 
     // Updates
     @Published private(set) var availableUpdate: UpdateInfo?
+
+    // Theming
+    @Published private(set) var theme: ThemeID
+    /// Whether the ambient colour follows the highlighted row.
+    @Published private(set) var ambientFollowsSelection: Bool
+    /// The ambient wash colour, pushed in by the window controller.
+    @Published private(set) var ambientPalette: AlbumPalette?
+    /// The selected row's own album palette, when the Album Art theme is on.
+    @Published private(set) var rowAccent: AlbumPalette?
 
     var onClose: (() -> Void)?
     /// Reports playback outcomes as toasts.
@@ -56,6 +68,21 @@ final class PaletteModel: ObservableObject {
     var onCheckForUpdates: (() -> Void)?
     /// Downloads and installs the available update.
     var onInstallUpdate: (() -> Void)?
+    /// Persists a newly chosen theme.
+    var onThemeChange: ((ThemeID) -> Void)?
+    /// Persists the "ambient follows the highlighted row" option.
+    var onAmbientFollowsSelectionChange: ((Bool) -> Void)?
+    /// Opens the Theme dropdown at the Settings row (AppKit owns the menu, so it
+    /// gets real arrow-key and Return handling for free).
+    var onOpenThemeMenu: (() -> Void)?
+    /// Called when the What's New screen is presented, so it is marked as seen.
+    var onWhatsNewShown: (() -> Void)?
+    /// Notifies whoever is interested which row is highlighted.
+    ///
+    /// Deliberately **not** driven by a `@Published` sink: `@Published` fires in
+    /// `willSet`, so such a sink would read the *previous* selection and the
+    /// ambient colour would lag a row behind.
+    var onSelectionChange: ((PaletteItem?) -> Void)?
     /// Applies a new hotkey; returns false when the shortcut is unavailable.
     var onHotKeyChange: ((HotKeyPreference) -> Bool)?
 
@@ -68,6 +95,8 @@ final class PaletteModel: ObservableObject {
     private var commands: [CommandEntry] = []
     private var music: [MusicCandidate] = []
     private var nowPlaying: NowPlayingTrack?
+    /// Resolves the selected row's album palette (Album Art theme only).
+    private var accentTask: Task<Void, Never>?
     /// When now-playing was last polled, for progress interpolation.
     private(set) var lastPollDate: Date?
     /// The scope currently being browsed (nil = not browsing).
@@ -86,12 +115,16 @@ final class PaletteModel: ObservableObject {
         searchService: SearchService,
         musicController: MusicController,
         libraryProvider: LibrarySearchProvider,
-        hotKey: HotKeyPreference = .default
+        hotKey: HotKeyPreference = .default,
+        theme: ThemeID = .tahoe,
+        ambientFollowsSelection: Bool = false
     ) {
         self.searchService = searchService
         self.musicController = musicController
         self.libraryProvider = libraryProvider
         self.hotKey = hotKey
+        self.theme = theme
+        self.ambientFollowsSelection = ambientFollowsSelection
         self.executor = CommandExecutor(controller: musicController)
 
         searchService.$results
@@ -135,6 +168,9 @@ final class PaletteModel: ObservableObject {
         screen = .search
         isRecordingHotKey = false
         settingsMessage = nil
+        accentTask?.cancel()
+        accentTask = nil
+        rowAccent = nil
         focusToken = UUID()
     }
 
@@ -147,26 +183,41 @@ final class PaletteModel: ObservableObject {
         // A leading/trailing keyword followed by whitespace becomes a scope:
         // move it out of the field text so it isn't duplicated by the chip.
         let parsed = SearchQuery.parse(query)
-        if parsed.preference != .songs {
-            scope = parsed.preference
+        if let parsedScope = parsed.scope {
+            scope = parsedScope
             query = parsed.term
         }
 
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        // A scope is music-only, so command rows are suppressed.
+        // The theme scope is an options list, not a music search: whatever is typed
+        // after it narrows the options.
+        if scope == .themes {
+            browsePreference = nil
+            searchService.clear()
+            music = []
+            commands = ThemeScopeMenu.entries(
+                currentTheme: theme,
+                followsSelection: ambientFollowsSelection,
+                filter: trimmed
+            )
+            rebuildItems()
+            return
+        }
+
+        // A music scope is songs-only, so command rows are suppressed.
         commands = scope == nil ? commandEntries(for: trimmed) : []
 
         // Songs: only for `play <song>` or free text. A recognised non-play
         // command shows just the command. An empty scope browses that kind.
         if let term = CommandParser.searchTerm(for: CommandParser.parse(query)), !term.isEmpty {
             browsePreference = nil
-            searchService.updateQuery(SearchQuery(term: term, preference: scope ?? .songs))
-        } else if let scope, scope != .songs {
-            if browsePreference != scope {
-                browsePreference = scope
+            searchService.updateQuery(SearchQuery(term: term, preference: scope?.rankPreference ?? .songs))
+        } else if let browse = scope?.rankPreference {
+            if browsePreference != browse {
+                browsePreference = browse
                 selectedIndex = 0
-                searchService.browse(scope)
+                searchService.browse(browse)
             }
         } else {
             browsePreference = nil
@@ -205,16 +256,177 @@ final class PaletteModel: ObservableObject {
         onInstallUpdate?()
     }
 
-    /// Catalog commands, with an "Install Update" row injected when one exists.
+    // MARK: - Theming
+
+    /// The track the poll currently has, so the window can resolve its palette.
+    var currentTrack: NowPlayingTrack? { nowPlaying }
+
+    func setAmbientPalette(_ palette: AlbumPalette?) {
+        guard palette != ambientPalette else { return }
+        ambientPalette = palette
+    }
+
+    func setTheme(_ theme: ThemeID) {
+        guard theme != self.theme else { return }
+        self.theme = theme
+        onThemeChange?(theme)
+        clampSettingsSelection()
+        // Rebuild so the "Theme:" rows move their checkmark (which also
+        // re-resolves the selected row's accent for the new theme).
+        queryChanged()
+    }
+
+    /// Turns the "ambient follows the highlighted row" option on or off.
+    func setFollowsSelection(_ follows: Bool) {
+        guard follows != ambientFollowsSelection else { return }
+        ambientFollowsSelection = follows
+        onAmbientFollowsSelectionChange?(follows)
+    }
+
+    // MARK: - Settings navigation
+
+    /// The rows Settings currently shows, in order.
+    var visibleSettingsRows: [SettingsRow] { SettingsRow.visibleRows(theme: theme) }
+
+    /// The highlighted Settings row, if any.
+    var selectedSettingsRow: SettingsRow? {
+        let rows = visibleSettingsRows
+        guard rows.indices.contains(settingsSelection) else { return nil }
+        return rows[settingsSelection]
+    }
+
+    /// Highlights a specific row, if it is currently visible.
+    func selectSettingsRow(_ row: SettingsRow) {
+        guard let index = visibleSettingsRows.firstIndex(of: row) else { return }
+        settingsSelection = index
+    }
+
+    /// The Theme row's rect in the Settings view's coordinate space, so the
+    /// dropdown can be positioned at it.
+    private(set) var themeRowFrame: CGRect = .zero
+
+    func setThemeRowFrame(_ frame: CGRect) {
+        themeRowFrame = frame
+    }
+
+    func openThemeMenu() {
+        onOpenThemeMenu?()
+    }
+
+    func moveSettingsSelection(by delta: Int) {
+        let count = visibleSettingsRows.count
+        guard count > 0 else { return }
+        settingsSelection = min(max(settingsSelection + delta, 0), count - 1)
+    }
+
+    /// Runs the highlighted row's primary action.
+    func activateSettingsRow() {
+        switch selectedSettingsRow {
+        case .hotKey:
+            beginHotKeyRecording()
+        case .theme:
+            onOpenThemeMenu?()
+        case .followSelection:
+            setFollowsSelection(!ambientFollowsSelection)
+        case .update:
+            // Install is the primary action when there is something to install.
+            if availableUpdate != nil { installUpdate() } else { checkForUpdates() }
+        case .whatsNew:
+            startWhatsNew()
+        case .onboarding:
+            startOnboarding()
+        case .none:
+            break
+        }
+    }
+
+    /// Switching away from Album Art hides a row, so the highlight must not dangle.
+    private func clampSettingsSelection() {
+        let count = visibleSettingsRows.count
+        if settingsSelection >= count { settingsSelection = max(0, count - 1) }
+    }
+
+    // MARK: - What's New
+
+    private var whatsNewReturnScreen: PaletteScreen = .search
+
+    /// The highlights the running version announces.
+    var whatsNewHighlights: [WhatsNewEntry] {
+        guard let version = AppVersion.current()?.description else { return [] }
+        return WhatsNew.highlights(for: version)
+    }
+
+    func startWhatsNew() {
+        whatsNewReturnScreen = (screen == .settings) ? .settings : .search
+        screen = .whatsNew
+        isRecordingHotKey = false
+        settingsMessage = nil
+        onWhatsNewShown?()
+    }
+
+    func closeWhatsNew() {
+        screen = whatsNewReturnScreen
+        requestFocus()
+    }
+
+    /// The highlighted row changed (or the rows were rebuilt): refresh everything
+    /// derived from it, and tell the ambient theme.
+    private func selectionChanged() {
+        refreshRowAccent()
+        onSelectionChange?(selectedItem)
+    }
+
+    /// Resolves the accent for whatever row is selected.
+    ///
+    /// Not cache-only on purpose: the row icons already fetch their artwork, so
+    /// this piggybacks on that same cache — no extra AppleScript lookups. It just
+    /// may arrive a beat after the row appears.
+    private func refreshRowAccent() {
+        accentTask?.cancel()
+        accentTask = nil
+
+        guard theme == .albumArt, let source = selectedItem?.artworkSource else {
+            rowAccent = nil
+            return
+        }
+
+        if let cached = PaletteCache.shared.cached(for: source) {
+            rowAccent = cached.isUsable ? cached : nil
+            return
+        }
+
+        rowAccent = nil
+        accentTask = Task { [weak self] in
+            let palette = await PaletteCache.shared.palette(for: source)
+            guard !Task.isCancelled, let self else { return }
+            guard self.selectedItem?.artworkSource == source else { return }
+            self.rowAccent = (palette?.isUsable == true) ? palette : nil
+        }
+    }
+
+    /// Catalog commands, with the update and theme rows injected where they match.
     private func commandEntries(for trimmed: String) -> [CommandEntry] {
         var entries = CommandCatalog.matches(for: trimmed)
-        guard let update = availableUpdate else { return entries }
-
-        let entry = Self.installEntry(update)
         let normalized = TextNormalizer.normalize(trimmed)
-        if normalized.isEmpty || CommandCatalog.score(entry, normalizedInput: normalized) != nil {
-            entries.insert(entry, at: 0)
+
+        if let update = availableUpdate {
+            let entry = Self.installEntry(update)
+            if normalized.isEmpty || CommandCatalog.score(entry, normalizedInput: normalized) != nil {
+                entries.insert(entry, at: 0)
+            }
         }
+
+        // Theme rows surface once the user types something matching, so the
+        // empty-box command list stays as short as it is today. Typing `theme `
+        // (with a space) promotes them to a scope instead.
+        if !normalized.isEmpty {
+            let matched = ThemeScopeMenu.entries(
+                currentTheme: theme,
+                followsSelection: ambientFollowsSelection
+            ).filter { CommandCatalog.score($0, normalizedInput: normalized) != nil }
+            entries.insert(contentsOf: matched, at: 0)
+        }
+
         return entries
     }
 
@@ -266,11 +478,13 @@ final class PaletteModel: ObservableObject {
     func moveSelection(by delta: Int) {
         guard !items.isEmpty else { return }
         selectedIndex = min(max(selectedIndex + delta, 0), items.count - 1)
+        selectionChanged()
     }
 
     func select(_ index: Int) {
         guard items.indices.contains(index) else { return }
         selectedIndex = index
+        selectionChanged()
     }
 
     func executeSelection() {
@@ -373,6 +587,7 @@ final class PaletteModel: ObservableObject {
 
     func openSettings() {
         screen = .settings
+        settingsSelection = 0
         isRecordingHotKey = false
         settingsMessage = nil
     }
@@ -487,7 +702,7 @@ final class PaletteModel: ObservableObject {
         let newItems = PaletteListComposer.compose(
             query: query,
             // Browse mode is albums/playlists only — no now-playing row.
-            nowPlaying: browsePreference == nil ? nowPlaying : nil,
+            nowPlaying: (browsePreference == nil && scope != .themes) ? nowPlaying : nil,
             commands: commands,
             music: music
         )
@@ -497,6 +712,7 @@ final class PaletteModel: ObservableObject {
         } else if selectedIndex >= newItems.count {
             selectedIndex = newItems.count - 1
         }
+        selectionChanged()
     }
 
     private func run(_ action: PaletteAction, selected: MusicCandidate?, closeOnSuccess: Bool = true) {
@@ -507,6 +723,10 @@ final class PaletteModel: ObservableObject {
             rebuildLibraryIndex()
         case .installUpdate:
             installUpdate()
+        case .setTheme(let theme):
+            setTheme(theme)
+        case .setFollowsSelection(let follows):
+            setFollowsSelection(follows)
         case .music(let command):
             statusMessage = nil
             Task {
@@ -564,8 +784,7 @@ final class PaletteModel: ObservableObject {
     }
 
 #if DEBUG
-    /// Development helper: pretend the current track is playing so the waveform
-    /// animation can be captured in an offscreen snapshot.
+    /// Development helper: pretend the current track is playing.
     func debugForcePlaying() {
         guard let track = nowPlaying else { return }
         nowPlaying = NowPlayingTrack(
@@ -578,6 +797,18 @@ final class PaletteModel: ObservableObject {
             duration: track.duration
         )
         rebuildItems()
+    }
+
+    /// Development helper: show a synthetic now-playing card on the default
+    /// screen, so it can be captured without Music loaded.
+    func debugSetNowPlaying(_ track: NowPlayingTrack) {
+        nowPlaying = track
+        rebuildItems()
+    }
+
+    /// Development helper: force the accent the now-playing card tints with.
+    func debugSetRowAccent(_ palette: AlbumPalette?) {
+        rowAccent = palette
     }
 #endif
 }

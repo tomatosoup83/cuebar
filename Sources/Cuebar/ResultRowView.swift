@@ -5,6 +5,8 @@ import CuebarCore
 struct ResultRowView: View {
     let item: PaletteItem
     let isSelected: Bool
+    /// The row's own album palette, when the theme follows the highlighted row.
+    var accent: AlbumPalette?
 
     var body: some View {
         HStack(spacing: 12) {
@@ -28,12 +30,46 @@ struct ResultRowView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(
-            isSelected ? AnyShapeStyle(.selection) : AnyShapeStyle(Color.clear),
-            in: RoundedRectangle(cornerRadius: 10)
-        )
+        .background { selectionBackground }
         .contentShape(RoundedRectangle(cornerRadius: 10))
+        .animation(.easeInOut(duration: 0.3), value: accent)
     }
+
+    /// The selected row: the system's translucent selection material with the
+    /// cover's colour laid *through* it, plus the specular edge that reads as
+    /// glass. Identical to the now-playing card's treatment.
+    @ViewBuilder
+    private var selectionBackground: some View {
+        if isSelected {
+            let shape = RoundedRectangle(cornerRadius: 10)
+            shape
+                .fill(.selection)
+                .overlay {
+                    if let accent {
+                        shape.fill(
+                            Color(themeColor: accent.selection)
+                                .opacity(ThemeGlass.rowTintOpacity)
+                        )
+                    }
+                }
+                .overlay {
+                    if accent != nil {
+                        shape.strokeBorder(
+                            LinearGradient(
+                                colors: [.white.opacity(0.34), .white.opacity(0.04)],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            ),
+                            lineWidth: 0.5
+                        )
+                    }
+                }
+        } else {
+            Color.clear
+        }
+    }
+
+    // MARK: - Content
 
     private var title: String {
         switch item {
@@ -54,7 +90,7 @@ struct ResultRowView: View {
     private var badge: String? {
         switch item {
         case .nowPlaying: return nil // rendered together with the waveform
-        case .command: return "Command"
+        case .command(let entry): return entry.badge
         case .music(let candidate):
             guard candidate.source == .library else { return "Catalog" }
             switch candidate.kind {
@@ -109,28 +145,8 @@ struct ResultRowView: View {
             }
             .frame(width: 36, height: 36)
 
-        case .music(let candidate):
-            ArtworkView(source: artworkSource(for: candidate))
-        }
-    }
-
-    private func artworkSource(for candidate: MusicCandidate) -> ArtworkSource? {
-        switch candidate.source {
-        case .library:
-            // A playlist's `persistentID` is the playlist itself, not a track,
-            // so use its representative track for artwork.
-            let trackID = candidate.kind == .playlist
-                ? candidate.artworkTrackID
-                : (candidate.persistentID ?? candidate.artworkTrackID)
-            guard let trackID else { return nil }
-            return .library(
-                persistentID: trackID,
-                artist: candidate.artist,
-                album: candidate.album
-            )
-        case .catalog:
-            guard let url = candidate.artworkURL else { return nil }
-            return .remote(url)
+        case .music:
+            ArtworkView(source: item.artworkSource)
         }
     }
 }
