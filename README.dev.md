@@ -356,6 +356,13 @@ top-centre when the palette is already hidden (success closes it).
 - `ToastWindowController` observes `ToastCenter.$current`, sizes the panel to the
   SwiftUI content, animates it (fade only under Reduce Motion) and posts an
   Accessibility announcement.
+- **Sizing happens before the toast is seen.** The new toast is measured on a
+  detached `NSHostingView` (`fittingSize` reports its natural size, independent of
+  the panel's current frame), and the panel is set to that size *and laid out*
+  before `orderFrontRegardless`. A newer toast replacing a visible one swaps
+  instantly at its final size, so a longer message never shows the window grow.
+  The hosting view is layer-backed with a `toastCornerRadius` mask, so a resize can
+  never flash the panel's square corner.
 - `PaletteModel` emits toasts through `onToast` before `onClose`, so the panel
   frame is still available for anchoring. `shuffle` toggles read
   `MusicController.shuffleEnabled()` first so the toast reports the new state.

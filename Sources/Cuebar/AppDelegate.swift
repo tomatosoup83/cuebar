@@ -96,6 +96,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         configureStatusItem()
         loadLibrary()
 
+#if DEBUG
+        if ProcessInfo.processInfo.environment["CUEBAR_TOAST_TEST"] == "1" {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                self?.debugToastTransitionTest()
+            }
+        }
+#endif
+
         // First run: walk the user through opening Cuebar and granting access.
         if !onboardingStore.hasCompleted {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
@@ -213,6 +221,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
     }
+
+#if DEBUG
+    /// Development helper: fire a short then a long toast, to check the resize is
+    /// never visible.
+    func debugToastTransitionTest() {
+        let base = Toast(kind: .success, message: "Playing “purple”", detail: "Olivia Rodrigo · you seem pretty sad")
+        paletteController?.presentToast(base)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { [weak self] in
+            self?.paletteController?.presentToast(
+                Toast(kind: .success, message: "Playing “EXACTLY WHAT YOU RUN FROM YOU END UP CHASING”",
+                      detail: "Tyler, The Creator · IGOR")
+            )
+        }
+    }
+#endif
 
     private func loadLibrary() {
         if let cached = indexStore.loadCached() {

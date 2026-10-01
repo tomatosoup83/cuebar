@@ -16,6 +16,9 @@ final class ToastWindowController {
 
     /// The palette frame to anchor below, captured when the toast is requested.
     private var anchorFrame: NSRect?
+    /// True while a toast is meant to be on screen; the alpha fade runs around
+    /// it, so presentation never depends on an in-flight animation.
+    private var isPresented = false
 
     init(center: ToastCenter) {
         self.center = center
@@ -25,6 +28,12 @@ final class ToastWindowController {
         hostingView = NSHostingView(rootView: ToastView(toast: Toast(kind: .success, message: " ")))
         hostingView.frame = rect
         hostingView.autoresizingMask = [.width, .height]
+        // The panel is square; the content carries the rounded shape. Round the
+        // host as well, so a resize can never flash a square corner.
+        hostingView.wantsLayer = true
+        hostingView.layer?.cornerRadius = PaletteMetrics.toastCornerRadius
+        hostingView.layer?.cornerCurve = .continuous
+        hostingView.layer?.masksToBounds = true
         panel.contentView = hostingView
 
         center.$current
@@ -49,28 +58,73 @@ final class ToastWindowController {
 
     private func present(_ toast: Toast) {
         let style = themeProvider?() ?? (.tahoe, nil)
-        hostingView.rootView = ToastView(toast: toast, theme: style.theme, palette: style.palette)
+        let view = ToastView(toast: toast, theme: style.theme, palette: style.palette)
+        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
 
-        let size = hostingView.fittingSize
+        // Work out how big the new toast wants to be *before* it can be seen,
+        // then lay it out at that size. The window is therefore already at its
+        // final size when it appears, and never grows where the user can see it.
+        hostingView.rootView = view
+        let size = measuredSize(of: view)
         panel.setContentSize(size)
         panel.setFrameOrigin(origin(for: size))
+        hostingView.layoutSubtreeIfNeeded()
 
-        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        panel.alphaValue = reduceMotion ? 1 : 0
-        panel.orderFrontRegardless()
-        panel.invalidateShadow()
-
-        if !reduceMotion {
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.16
-                panel.animator().alphaValue = 1
-            }
+        if reduceMotion {
+            isPresented = true
+            hostingView.alphaValue = 1
+            panel.alphaValue = 1
+            panel.orderFrontRegardless()
+            panel.invalidateShadow()
+            announce(toast)
+            return
         }
 
-        announce(toast)
+        if isPresented, panel.isVisible {
+            // Already showing: the new toast is laid out at its final size, so the
+            // swap is instant and no resize is ever visible. Only the text and
+            // width change, in one frame.
+            hostingView.alphaValue = 1
+            panel.alphaValue = 1
+            panel.invalidateShadow()
+            debugCheckSizeStable(presented: size)
+            announce(toast)
+            return
+        }
+
+        isPresented = true
+        hostingView.alphaValue = 1
+        panel.alphaValue = 0
+        panel.orderFrontRegardless()
+        panel.invalidateShadow()
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.16
+            panel.animator().alphaValue = 1
+        }
+        debugCheckSizeStable(presented: size)
+    }
+
+#if DEBUG
+    /// Logs whether the panel changed size after the toast was presented, which
+    /// is exactly the resize the user shouldn't be able to see.
+    private func debugCheckSizeStable(presented: NSSize) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            guard let self else { return }
+            let now = self.panel.frame.size
+            NSLog("Cuebar: toast size presented=\(presented.width)x\(presented.height) "
+                  + "later=\(now.width)x\(now.height) stable=\(now == presented)")
+        }
+    }
+#endif
+
+    /// The size the toast wants, measured on a detached host so it never depends
+    /// on (or disturbs) the panel's current frame.
+    private func measuredSize(of view: ToastView) -> NSSize {
+        NSHostingView(rootView: view).fittingSize
     }
 
     private func hide() {
+        isPresented = false
         guard panel.isVisible else { return }
         guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
             panel.orderOut(nil)
