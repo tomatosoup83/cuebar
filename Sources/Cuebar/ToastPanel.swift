@@ -16,12 +16,17 @@ final class ToastPanel: NSPanel {
         level = .floating
         backgroundColor = .clear
         isOpaque = false
-        hasShadow = true
+        // The window is a fixed transparent canvas bigger than the toast, so a
+        // window shadow would draw a rectangle. The toast draws its own shadow.
+        hasShadow = false
         isMovableByWindowBackground = false
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
         hidesOnDeactivate = false
         ignoresMouseEvents = true
-        animationBehavior = .utilityWindow
+        // No animated resizes: a toast must appear at its final size instantly,
+        // never be seen growing (and never scale the old backing store, which
+        // smears the previous message across the new one).
+        animationBehavior = .none
     }
 
     override var canBecomeKey: Bool { false }

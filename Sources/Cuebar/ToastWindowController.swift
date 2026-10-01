@@ -4,11 +4,17 @@ import Combine
 import CuebarCore
 
 /// Owns the toast panel and shows/hides it as `ToastCenter.current` changes.
+///
+/// The panel is a **fixed-size transparent canvas**; the toast changes size
+/// inside it. That way the window never resizes, so a longer or shorter message
+/// can never be seen at the previous one's size — the transition is just a
+/// content update, and it happens in a single frame.
 @MainActor
 final class ToastWindowController {
     private let center: ToastCenter
     private let panel: ToastPanel
-    private let hostingView: NSHostingView<ToastView>
+    private let hostingView: NSHostingView<ToastCanvas>
+    private let presentation = ToastPresentation()
     private var cancellables = Set<AnyCancellable>()
 
     /// Supplies the current theme + ambient palette so toasts match the panel.
@@ -23,17 +29,11 @@ final class ToastWindowController {
     init(center: ToastCenter) {
         self.center = center
 
-        let rect = NSRect(x: 0, y: 0, width: 360, height: 48)
+        let rect = NSRect(origin: .zero, size: PaletteMetrics.toastCanvasSize)
         panel = ToastPanel(contentRect: rect)
-        hostingView = NSHostingView(rootView: ToastView(toast: Toast(kind: .success, message: " ")))
+        hostingView = NSHostingView(rootView: ToastCanvas(presentation: presentation))
         hostingView.frame = rect
         hostingView.autoresizingMask = [.width, .height]
-        // The panel is square; the content carries the rounded shape. Round the
-        // host as well, so a resize can never flash a square corner.
-        hostingView.wantsLayer = true
-        hostingView.layer?.cornerRadius = PaletteMetrics.toastCornerRadius
-        hostingView.layer?.cornerCurve = .continuous
-        hostingView.layer?.masksToBounds = true
         panel.contentView = hostingView
 
         center.$current
@@ -58,69 +58,54 @@ final class ToastWindowController {
 
     private func present(_ toast: Toast) {
         let style = themeProvider?() ?? (.tahoe, nil)
-        let view = ToastView(toast: toast, theme: style.theme, palette: style.palette)
         let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let place = placement()
 
-        // Work out how big the new toast wants to be *before* it can be seen,
-        // then lay it out at that size. The window is therefore already at its
-        // final size when it appears, and never grows where the user can see it.
-        hostingView.rootView = view
-        let size = measuredSize(of: view)
-        panel.setContentSize(size)
-        panel.setFrameOrigin(origin(for: size))
+        // Update the (stable) content and reposition the fixed-size panel.
+        // Nothing here resizes the window, so the toast can grow or shrink
+        // freely, and the transaction forbids an implicit fade between messages.
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        presentation.toast = toast
+        presentation.theme = style.theme
+        presentation.palette = style.palette
+        presentation.verticalAlignment = place.below ? .top : .bottom
+        presentation.width = huggingWidth(of: toast, style: style)
+        panel.setFrameOrigin(origin(for: place))
+        CATransaction.commit()
         hostingView.layoutSubtreeIfNeeded()
 
         if reduceMotion {
             isPresented = true
-            hostingView.alphaValue = 1
             panel.alphaValue = 1
             panel.orderFrontRegardless()
-            panel.invalidateShadow()
             announce(toast)
             return
         }
 
         if isPresented, panel.isVisible {
-            // Already showing: the new toast is laid out at its final size, so the
-            // swap is instant and no resize is ever visible. Only the text and
-            // width change, in one frame.
-            hostingView.alphaValue = 1
+            // Already showing: the new toast simply replaces the old one.
             panel.alphaValue = 1
-            panel.invalidateShadow()
-            debugCheckSizeStable(presented: size)
             announce(toast)
             return
         }
 
         isPresented = true
-        hostingView.alphaValue = 1
         panel.alphaValue = 0
         panel.orderFrontRegardless()
-        panel.invalidateShadow()
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.16
             panel.animator().alphaValue = 1
         }
-        debugCheckSizeStable(presented: size)
+        announce(toast)
     }
 
-#if DEBUG
-    /// Logs whether the panel changed size after the toast was presented, which
-    /// is exactly the resize the user shouldn't be able to see.
-    private func debugCheckSizeStable(presented: NSSize) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
-            guard let self else { return }
-            let now = self.panel.frame.size
-            NSLog("Cuebar: toast size presented=\(presented.width)x\(presented.height) "
-                  + "later=\(now.width)x\(now.height) stable=\(now == presented)")
-        }
-    }
-#endif
-
-    /// The size the toast wants, measured on a detached host so it never depends
-    /// on (or disturbs) the panel's current frame.
-    private func measuredSize(of view: ToastView) -> NSSize {
-        NSHostingView(rootView: view).fittingSize
+    /// The width the toast wants to hug, capped at `toastMaxWidth`.
+    private func huggingWidth(of toast: Toast, style: (theme: ThemeID, palette: AlbumPalette?)) -> CGFloat {
+        let natural = NSHostingView(
+            rootView: ToastView(toast: toast, theme: style.theme, palette: style.palette)
+        ).fittingSize.width
+        return min(natural, PaletteMetrics.toastMaxWidth)
     }
 
     private func hide() {
@@ -140,30 +125,65 @@ final class ToastWindowController {
         }
     }
 
-    /// Below the palette when there is room, otherwise above it; top-centre when
-    /// there is no palette, always clamped to the screen.
-    private func origin(for size: NSSize) -> NSPoint {
+    // MARK: - Placement
+
+    /// Where the toast goes relative to the palette.
+    private struct Placement {
+        let visible: NSRect
+        let anchor: NSRect?
+        /// Below the palette (top-aligned in the canvas) or above it (bottom).
+        let below: Bool
+    }
+
+    private func placement() -> Placement {
         let screen = anchorFrame
             .flatMap { frame in NSScreen.screens.first { $0.frame.intersects(frame) } }
             ?? NSScreen.main
             ?? NSScreen.screens.first
-        guard let visible = screen?.visibleFrame else { return .zero }
+        let visible = screen?.visibleFrame ?? .zero
 
+        // Decide with the tallest a toast can get, so the choice can't depend on
+        // the message being shown.
+        let below: Bool
+        if let anchor = anchorFrame {
+            let room = anchor.minY - PaletteMetrics.toastGap
+            below = (room - PaletteMetrics.toastMaxHeight)
+                >= visible.minY + PaletteMetrics.toastShadowInset
+        } else {
+            below = true
+        }
+        return Placement(visible: visible, anchor: anchorFrame, below: below)
+    }
+
+    /// Positions the fixed canvas so the edge of the toast nearest the palette
+    /// lands the gap away from it. The toast's own height never matters: it hugs
+    /// the canvas edge that is being placed.
+    private func origin(for place: Placement) -> NSPoint {
         let gap = PaletteMetrics.toastGap
+        let inset = PaletteMetrics.toastShadowInset
+        let canvas = PaletteMetrics.toastCanvasSize
+
         var x: CGFloat
         var y: CGFloat
 
-        if let anchor = anchorFrame {
-            x = anchor.midX - size.width / 2
-            let below = anchor.minY - gap - size.height
-            y = below >= visible.minY ? below : anchor.maxY + gap
+        if let anchor = place.anchor {
+            x = anchor.midX - canvas.width / 2
+            if place.below {
+                // Toast top sits `inset` below the canvas top.
+                let toastTop = anchor.minY - gap
+                y = toastTop + inset - canvas.height
+            } else {
+                // Toast bottom sits `inset` above the canvas bottom.
+                y = anchor.maxY + gap - inset
+            }
         } else {
-            x = visible.midX - size.width / 2
-            y = visible.maxY - gap - size.height
+            // Top-centre of the screen.
+            x = place.visible.midX - canvas.width / 2
+            let toastTop = place.visible.maxY - gap
+            y = toastTop + inset - canvas.height
         }
 
-        x = min(max(x, visible.minX + gap), visible.maxX - size.width - gap)
-        y = min(max(y, visible.minY + gap), visible.maxY - size.height - gap)
+        x = min(max(x, place.visible.minX - inset), place.visible.maxX - canvas.width + inset)
         return NSPoint(x: x.rounded(), y: y.rounded())
     }
 

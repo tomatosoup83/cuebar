@@ -223,15 +223,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
 #if DEBUG
-    /// Development helper: fire a short then a long toast, to check the resize is
-    /// never visible.
+    /// Development helper: fire a long then a short toast back-to-back, to check
+    /// the swap is never visible. Titles come from `CUEBAR_TOAST_LONG` /
+    /// `CUEBAR_TOAST_SHORT` so the real pair can be reproduced.
     func debugToastTransitionTest() {
-        let base = Toast(kind: .success, message: "Playing “purple”", detail: "Olivia Rodrigo · you seem pretty sad")
-        paletteController?.presentToast(base)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { [weak self] in
+        let environment = ProcessInfo.processInfo.environment
+        let long = environment["CUEBAR_TOAST_LONG"]
+            ?? "SWEET / I THOUGHT YOU WANTED TO DANCE (feat. Brent Faiyaz & Fana Hues)"
+        let short = environment["CUEBAR_TOAST_SHORT"] ?? "Pier 4"
+        let gap = environment["CUEBAR_TOAST_GAP"].flatMap(Double.init) ?? 1.2
+
+        paletteController?.presentToast(
+            Toast(kind: .success, message: "Playing “\(long)”", detail: "Tyler, The Creator · CALL ME IF YOU GET LOST")
+        )
+        DispatchQueue.main.asyncAfter(deadline: .now() + gap) { [weak self] in
             self?.paletteController?.presentToast(
-                Toast(kind: .success, message: "Playing “EXACTLY WHAT YOU RUN FROM YOU END UP CHASING”",
-                      detail: "Tyler, The Creator · IGOR")
+                Toast(kind: .success, message: "Playing “\(short)”", detail: "Clairo · Charm")
             )
         }
     }

@@ -356,13 +356,23 @@ top-centre when the palette is already hidden (success closes it).
 - `ToastWindowController` observes `ToastCenter.$current`, sizes the panel to the
   SwiftUI content, animates it (fade only under Reduce Motion) and posts an
   Accessibility announcement.
-- **Sizing happens before the toast is seen.** The new toast is measured on a
-  detached `NSHostingView` (`fittingSize` reports its natural size, independent of
-  the panel's current frame), and the panel is set to that size *and laid out*
-  before `orderFrontRegardless`. A newer toast replacing a visible one swaps
-  instantly at its final size, so a longer message never shows the window grow.
-  The hosting view is layer-backed with a `toastCornerRadius` mask, so a resize can
-  never flash the panel's square corner.
+- **The window never resizes.** The panel is a fixed transparent canvas
+  (`PaletteMetrics.toastCanvasSize`); the toast changes size *inside* it. A resize
+  used to be visible — and worse, `animationBehavior = .utilityWindow` animated the
+  resize, so the previous message was scaled and smeared into the new one for a few
+  frames. `animationBehavior = .none` plus a fixed canvas removes both.
+- The toast hugs its text: `ToastPresentation.width` is the detached
+  `NSHostingView.fittingSize` width (capped at `toastMaxWidth`), so a short message
+  keeps a small toast and a long one grows to the cap and wraps. The content is
+  driven by an observed `ToastPresentation` instead of swapping `rootView` —
+  replacing the root view makes AppKit cross-dissolve the old and new views — and
+  the swap runs inside a `CATransaction` with actions disabled. The result is a
+  single-frame change with no ghosting.
+- The toast hugs the canvas edge nearest the palette (top when it is below, bottom
+  when above), so the panel is positioned from that edge and the toast's height
+  never enters the maths. It draws its own shadow (the window's shadow is off,
+  since a transparent canvas would cast a rectangle), so the panel needs no rounded
+  layer mask.
 - `PaletteModel` emits toasts through `onToast` before `onClose`, so the panel
   frame is still available for anchoring. `shuffle` toggles read
   `MusicController.shuffleEnabled()` first so the toast reports the new state.
@@ -488,6 +498,7 @@ handled by a local key monitor so they work even while the text field has focus.
 | `CUEBAR_PREVIEW_QUERY="hey jude"` | pre-fill a query |
 | `CUEBAR_SNAPSHOT=/tmp/panel.png` | render the panel to PNG and quit |
 | `CUEBAR_SNAPSHOT_DELAY=4` | seconds to wait before the snapshot (default 1.2) |
+| `CUEBAR_TOAST_TEST=1` | fire a long then a short toast (`CUEBAR_TOAST_LONG`, `CUEBAR_TOAST_SHORT`, `CUEBAR_TOAST_GAP`) |
 | `CUEBAR_FORCE_PLAYING=1` | treat the current track as playing (capture the equalizer) |
 | `CUEBAR_OPEN_SETTINGS=1` / `=recording` | open the Settings screen (optionally while recording) |
 
