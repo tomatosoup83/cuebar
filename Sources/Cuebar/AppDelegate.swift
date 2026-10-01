@@ -163,7 +163,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     self.paletteController?.debugCycleTest(steps: 10, stepMilliseconds: stepMs)
                 }
                 if let path = environment["CUEBAR_SNAPSHOT"] {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                    let delay = environment["CUEBAR_SNAPSHOT_DELAY"].flatMap(Double.init) ?? 1.2
+                    DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
                         self.paletteController?.debugSnapshot(to: path)
                         NSLog("Cuebar: wrote snapshot to \(path)")
                         NSApp.terminate(nil)

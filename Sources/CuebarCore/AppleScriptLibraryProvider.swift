@@ -24,6 +24,16 @@ public final class AppleScriptLibraryProvider: @unchecked Sendable {
         return Self.parsePlaylists(raw)
     }
 
+    /// Reads when each library track was last played, in one bulk Apple Event.
+    ///
+    /// Returns nothing when Music isn't running, so opening the palette never
+    /// launches it.
+    public func fetchPlayedDates() async throws -> [PlayedEntry] {
+        guard AppleScriptMusicController.isMusicRunning else { return [] }
+        let raw = try await runner.string(Self.playedDatesScript)
+        return RecentlyPlayed.parse(raw)
+    }
+
     // MARK: - Parsing
 
     static let listSeparator = "\u{1e}"   // ASCII record separator
@@ -177,6 +187,44 @@ public final class AppleScriptLibraryProvider: @unchecked Sendable {
     	set AppleScript's text item delimiters to ""
     end tell
     return namesText & listSep & artistsText & listSep & albumsText & listSep & idsText & listSep & durationsText & listSep & albumArtistsText & listSep & discNumbersText & listSep & trackNumbersText
+    """#
+
+    /// Emits `id⟨US⟩secondsAgo⟨RS⟩` for every track that has been played.
+    ///
+    /// The two property lists are fetched in bulk; the loop runs locally (outside
+    /// the `tell`), through a script object so list access stays O(1). Ages are
+    /// relative to `current date`, which keeps the output locale-independent.
+    static let playedDatesScript = #"""
+    set fieldSep to (ASCII character 31)
+    set listSep to (ASCII character 30)
+    tell application "Music"
+    	set theIds to persistent ID of every track of library playlist 1
+    	try
+    		set theDates to played date of every track of library playlist 1
+    	on error
+    		set theDates to {}
+    	end try
+    end tell
+    set nowDate to current date
+    script o
+    	property ids : {}
+    	property ds : {}
+    	property out : {}
+    end script
+    set o's ids to theIds
+    set o's ds to theDates
+    set n to count of o's ds
+    if (count of o's ids) < n then set n to count of o's ids
+    repeat with i from 1 to n
+    	set d to item i of o's ds
+    	if class of d is date then
+    		set end of o's out to (item i of o's ids) & fieldSep & (((nowDate - d) as integer) as string)
+    	end if
+    end repeat
+    set AppleScript's text item delimiters to listSep
+    set outText to (o's out) as string
+    set AppleScript's text item delimiters to ""
+    return outText
     """#
 
     static let playlistScript = #"""

@@ -20,10 +20,11 @@ box is empty, so they are discoverable. Typing the start of a command (`pau`,
 `nex`, `shuffle o`) surfaces it above any song matches, and Return runs the
 selected row.
 
-With an empty box the palette shows the **current Music.app track** at the top
-with a Spotify-style animated 4-bar equalizer while it plays ("Paused" with
-static bars otherwise), so it is useful the moment it opens. Return on that row
-toggles play/pause; typing anything hides it.
+With an empty box the palette shows a **home screen**: the **current Music.app
+track** in a large card at the top (with a Spotify-style animated equalizer while
+it plays, "Paused" with static bars otherwise), followed by a **Recently Played**
+shelf, so it is useful the moment it opens. Return on the card toggles
+play/pause; typing anything swaps the home screen for search results.
 
 Built with Swift, SwiftUI, AppKit and Swift Concurrency. No LLM, no network
 unless the catalog fallback is needed.
@@ -181,6 +182,32 @@ in the search box (`SearchScopeChip`), so the field then shows only the name.
 clicking the chip clears it (`clearScope()`), and command rows are suppressed
 while a scope is active.
 
+## Home screen (recently played)
+
+An empty palette shows the now-playing card followed by a **Recently Played**
+shelf of the last 8 library songs, each with a compact "how long ago" label
+(`5m ago`, `Yesterday`, `2w ago`). Return plays the song.
+
+- `AppleScriptLibraryProvider.fetchPlayedDates()` reads `persistent ID` and
+  `played date` of every track in two bulk Apple Events (~0.2 s for 6k tracks),
+  then loops locally — outside the `tell`, through a script object so list access
+  stays O(1) — emitting each played track's age relative to `current date`, which
+  keeps the output locale-independent. It returns nothing when Music isn't
+  running, so opening the palette never launches it.
+- `RecentlyPlayed` (Core, pure) parses that, resolves ids against the index
+  (dropping deleted tracks and non-songs), de-duplicates, sorts newest-first with a
+  deterministic tie-break, leaves out the track that is playing (it has the card)
+  and formats the relative label.
+- The fetch runs after the first now-playing poll on every open, and again when
+  the track changes. The shelf is kept between openings, so it paints on the first
+  frame; it is also re-resolved when an index refresh finishes, because the dates
+  can arrive before the index on first launch.
+- With a shelf, the home screen drops the transport commands (they duplicate the
+  card's controls) — `PaletteListComposer.homeCommands` keeps only an available
+  update. With no shelf (nothing played yet, Music not running) every command
+  shows, as before. Rows are `PaletteItem.recent`, under a "Recently Played"
+  section header.
+
 ## Now-playing card
 
 The current track renders as a larger card (`NowPlayingCardView`) at the top of
@@ -197,6 +224,10 @@ still toggles play/pause, and the footer then reads **"⏎ play/pause"**.
   repeat-one).
 - Card controls don't close the palette; Return on an ordinary command row still
   does.
+- **Artwork glow**: a blurred, saturated copy of the cover sits behind the
+  artwork, added as light (`plusLighter`) so it still reads when the cover matches
+  the card. It breathes on a slow ~4 s cycle while playing and dims when paused;
+  Reduce Motion holds it still.
 
 ## Updates
 
@@ -232,6 +263,14 @@ Two themes, chosen in **Settings → Theme** or by typing `theme`:
 The ambient gradient is keyed to the now-playing track, not the selected row:
 per-row ambient tinting would strobe the whole surface on every arrow key.
 
+- The wash is a **drifting mesh** (`AmbientMesh`, a 3×3 `MeshGradient`): corners
+  pinned, edge midpoints sliding along their edges and the centre wandering on a
+  slow Lissajous path (unrelated 14–22 s periods, so it never visibly loops). The
+  light top/bottom stops sit on the outside with the cover's accent drifting
+  through the middle. It only moves while music plays; `DriftClock` advances time
+  only while drifting, so pausing freezes the shape in place and resuming carries
+  on. A cover change crossfades whole meshes (one per palette). Reduce Motion
+  keeps it still.
 - `PaletteExtractor` (Core, pure + deterministic) downsamples the cached 256 px
   artwork to a 24×24 grid, averages the top/bottom thirds for the two gradient
   stops, and picks the most *saturated* colour bucket for the accent. Each stop
@@ -240,7 +279,7 @@ per-row ambient tinting would strobe the whole surface on every arrow key.
   dark cover can't darken the panel, then has its chroma pulled into a band
   (0.16–0.40 for the wash, 0.28–0.70 for the accent) so it is never muddy or
   garish. Artwork below a chroma confidence floor falls back to plain glass.
-- The wash strength is `ThemeBackground.washOpacity` (default **0.30**) and the
+- The wash strength is `ThemeBackground.washOpacity` (default **0.36**) and the
   glass tint is `ThemeGlass.tintOpacity` (default **0.35**) — the tint is the main
   colour lever. Both are overridable at launch with `CUEBAR_WASH_OPACITY` /
   `CUEBAR_GLASS_TINT` for quick A/B.
@@ -346,6 +385,7 @@ Sources/CuebarCore/          # testable, no UI
   LibraryResolver.swift      # maps a catalog item onto a library track (title + artist only)
   LibraryAlbumIndex.swift    # groups library songs into playable albums
   LibraryBrowse.swift        # random album/playlist list for empty scopes
+  RecentlyPlayed.swift       # played-date parsing + the home screen's recent shelf
   Toast.swift                # transient feedback model (+ per-kind duration)
   PlaybackFeedback.swift     # toast copy for playback outcomes
   ToastCenter.swift          # current toast + auto-dismiss (injectable timing)
@@ -423,6 +463,7 @@ handled by a local key monitor so they work even while the text field has focus.
 | `CUEBAR_SHOW_ON_LAUNCH=1` | open the palette on launch |
 | `CUEBAR_PREVIEW_QUERY="hey jude"` | pre-fill a query |
 | `CUEBAR_SNAPSHOT=/tmp/panel.png` | render the panel to PNG and quit |
+| `CUEBAR_SNAPSHOT_DELAY=4` | seconds to wait before the snapshot (default 1.2) |
 | `CUEBAR_FORCE_PLAYING=1` | treat the current track as playing (capture the equalizer) |
 | `CUEBAR_OPEN_SETTINGS=1` / `=recording` | open the Settings screen (optionally while recording) |
 
@@ -436,7 +477,8 @@ not captured, but layout, rows and text are.
 
 ## Tests
 
-`make test` runs 197 unit tests covering command parsing, command matching
+`make test` runs 258 unit tests covering the recently played shelf (parsing,
+ordering, exclusions, relative labels, home composition), command parsing, command matching
 (including that `play take on me` matches no command), now-playing parsing
 (incl. shuffle/repeat) and progress interpolation, list composition, artwork
 cache keys/persistence, the launch-hotkey preference (formatting, validation,

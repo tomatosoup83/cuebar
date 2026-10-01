@@ -61,15 +61,11 @@ struct NowPlayingCardView: View {
     private var header: some View {
         HStack(spacing: 12) {
             ArtworkView(
-                source: .nowPlaying(
-                    persistentID: track.persistentID,
-                    artist: track.artist,
-                    album: track.album,
-                    title: track.title
-                ),
+                source: artworkSource,
                 size: PaletteMetrics.nowPlayingArtwork,
                 cornerRadius: 9
             )
+            .background { ArtworkGlow(source: artworkSource, isPlaying: track.isPlaying) }
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(track.title)
@@ -172,6 +168,15 @@ struct NowPlayingCardView: View {
         .accessibilityLabel(help)
     }
 
+    private var artworkSource: ArtworkSource {
+        .nowPlaying(
+            persistentID: track.persistentID,
+            artist: track.artist,
+            album: track.album,
+            title: track.title
+        )
+    }
+
     private var subtitle: String {
         if !track.subtitle.isEmpty { return track.subtitle }
         return track.isPlaying ? "Playing" : "Paused"
@@ -181,5 +186,41 @@ struct NowPlayingCardView: View {
         guard seconds.isFinite, seconds >= 0 else { return "0:00" }
         let total = Int(seconds.rounded())
         return String(format: "%d:%02d", total / 60, total % 60)
+    }
+}
+
+/// A soft, blurred copy of the cover behind the artwork, so the art seems to
+/// light the card. It breathes gently while playing and dims when paused.
+private struct ArtworkGlow: View {
+    let source: ArtworkSource
+    let isPlaying: Bool
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var breathes: Bool { isPlaying && !reduceMotion }
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 20.0, paused: !breathes)) { context in
+            // A slow ~4 s swell; held at its midpoint when not breathing.
+            let pulse = breathes
+                ? (sin(context.date.timeIntervalSinceReferenceDate * 2 * .pi / 4) + 1) / 2
+                : 0.5
+            ArtworkView(
+                source: source,
+                size: PaletteMetrics.nowPlayingArtwork,
+                cornerRadius: 9
+            )
+            .saturation(1.6)
+            .scaleEffect(1.22 + 0.10 * pulse)
+            .blur(radius: 16)
+            .opacity(isPlaying ? 0.55 + 0.35 * pulse : 0.4)
+            .offset(y: 4)
+            // Added as light rather than painted on, so the glow still reads when
+            // the cover is the same colour as the card behind it.
+            .blendMode(.plusLighter)
+        }
+        .animation(.easeInOut(duration: 0.6), value: isPlaying)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }

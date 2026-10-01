@@ -1,11 +1,12 @@
 import Foundation
 
-/// A single row in the palette: the current track, a runnable command, or a
-/// music item.
+/// A single row in the palette: the current track, a runnable command, a
+/// music item, or a recently played track on the home screen.
 public enum PaletteItem: Identifiable, Equatable, Sendable {
     case nowPlaying(NowPlayingTrack)
     case command(CommandEntry)
     case music(MusicCandidate)
+    case recent(RecentTrack)
 
     public var id: String {
         switch self {
@@ -15,6 +16,8 @@ public enum PaletteItem: Identifiable, Equatable, Sendable {
             return "command:\(entry.id)"
         case .music(let candidate):
             return "music:\(candidate.id)"
+        case .recent(let track):
+            return "recent:\(track.id)"
         }
     }
 
@@ -34,6 +37,9 @@ public enum PaletteItem: Identifiable, Equatable, Sendable {
 
         case .command:
             return nil
+
+        case .recent(let track):
+            return PaletteItem.music(track.candidate).artworkSource
 
         case .music(let candidate):
             switch candidate.source {
@@ -59,25 +65,44 @@ public enum PaletteItem: Identifiable, Equatable, Sendable {
 
 /// Builds the displayed list.
 ///
-/// - Empty query: the current track (if any) followed by every command.
+/// - Empty query: the current track (if any), then the given commands, then the
+///   recently played shelf (the home screen).
 /// - Non-empty query: command matches followed by song results, never the
-///   now-playing row.
+///   now-playing row or the recent shelf.
 public enum PaletteListComposer {
     public static func compose(
         query: String,
         nowPlaying: NowPlayingTrack?,
         commands: [CommandEntry],
-        music: [MusicCandidate]
+        music: [MusicCandidate],
+        recent: [RecentTrack] = []
     ) -> [PaletteItem] {
         var items: [PaletteItem] = []
+        let isEmptyQuery = query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 
-        if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-           let nowPlaying {
+        if isEmptyQuery, let nowPlaying {
             items.append(.nowPlaying(nowPlaying))
         }
 
         items.append(contentsOf: commands.map(PaletteItem.command))
         items.append(contentsOf: music.map(PaletteItem.music))
+
+        if isEmptyQuery {
+            items.append(contentsOf: recent.map(PaletteItem.recent))
+        }
         return items
+    }
+
+    /// The commands the home screen keeps once it has a recent shelf.
+    ///
+    /// The transport commands duplicate the now-playing card's controls, so
+    /// they give way to the shelf; anything time-sensitive (an available update)
+    /// stays. With no shelf, every command shows, as before.
+    public static func homeCommands(
+        _ commands: [CommandEntry],
+        hasRecent: Bool
+    ) -> [CommandEntry] {
+        guard hasRecent else { return commands }
+        return commands.filter { $0.action == .installUpdate }
     }
 }

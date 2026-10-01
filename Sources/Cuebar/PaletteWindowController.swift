@@ -32,6 +32,7 @@ final class PaletteWindowController {
     /// lets the menu handle its own arrows and Return.
     private var isMenuTracking = false
     private var nowPlayingTask: Task<Void, Never>?
+    private let playedDatesFetcher = AppleScriptLibraryProvider()
 
     /// Applies a new hotkey; returns false when the shortcut is unavailable.
     var onHotKeyChange: ((HotKeyPreference) -> Bool)?
@@ -131,6 +132,9 @@ final class PaletteWindowController {
         model.onSelectionChange = { [weak self] item in
             self?.ambientCoordinator.update(selection: item)
         }
+        model.onFetchPlayedDates = { [playedDatesFetcher] in
+            try? await playedDatesFetcher.fetchPlayedDates()
+        }
         model.onOpenThemeMenu = { [weak self] in self?.showThemeMenu() }
         model.onWhatsNewShown = { [weak self] in self?.onWhatsNewShown?() }
         ambientCoordinator.setEnabled(theme == .albumArt)
@@ -221,6 +225,9 @@ final class PaletteWindowController {
         nowPlayingTask = Task { [weak self] in
             guard let self else { return }
             await self.refreshNowPlaying()
+            // After the card, so the hero paints first; the shelf from the last
+            // opening shows in the meantime.
+            self.model.refreshRecentlyPlayed()
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 1_500_000_000)
                 if Task.isCancelled { break }

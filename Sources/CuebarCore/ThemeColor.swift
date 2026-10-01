@@ -2,7 +2,7 @@ import Foundation
 
 /// A plain sRGB colour. Core stays SwiftUI-free, so views convert this to a
 /// `Color` themselves.
-public struct ThemeColor: Equatable, Sendable {
+public struct ThemeColor: Hashable, Sendable {
     public let red: Double
     public let green: Double
     public let blue: Double

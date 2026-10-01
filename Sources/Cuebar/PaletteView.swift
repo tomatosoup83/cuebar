@@ -35,7 +35,8 @@ struct PaletteView: View {
             ThemeBackground(
                 theme: model.theme,
                 palette: model.ambientPalette,
-                followsSelection: model.ambientFollowsSelection
+                followsSelection: model.ambientFollowsSelection,
+                isDrifting: model.currentTrack?.isPlaying ?? false
             )
         }
         .clipShape(
@@ -102,6 +103,9 @@ struct PaletteView: View {
                 ScrollView {
                     LazyVStack(spacing: 2) {
                         ForEach(Array(model.items.enumerated()), id: \.element.id) { index, item in
+                            if startsRecentSection(at: index) {
+                                sectionHeader("Recently Played")
+                            }
                             row(index: index, item: item)
                         }
                     }
@@ -148,6 +152,25 @@ struct PaletteView: View {
                 model.executeSelection()
             }
         }
+    }
+
+    /// True for the first row of the recent shelf, which gets a header.
+    private func startsRecentSection(at index: Int) -> Bool {
+        guard case .recent = model.items[index] else { return false }
+        guard index > 0 else { return true }
+        if case .recent = model.items[index - 1] { return false }
+        return true
+    }
+
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.top, 10)
+            .padding(.bottom, 2)
+            .accessibilityAddTraits(.isHeader)
     }
 
     /// The album tint for a row.

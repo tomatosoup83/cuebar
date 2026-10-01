@@ -4,7 +4,7 @@ import Foundation
 ///
 /// The colours are already washed toward a light neutral, so views can use them
 /// directly as a background without further contrast work.
-public struct AlbumPalette: Equatable, Sendable {
+public struct AlbumPalette: Hashable, Sendable {
     /// Gradient stop for the top of the panel.
     public let top: ThemeColor
     /// Gradient stop for the bottom of the panel.

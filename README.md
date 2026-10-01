@@ -26,7 +26,7 @@ without leaving whatever you were doing.
 - **Self-updating** — checks GitHub on launch; when a signed release is newer it
   can download, verify and relaunch into it (`update`).
 - **Themes** — Tahoe (plain glass) or Album Art, which tints the panel with the
-  now-playing cover. Pick one in Settings, or type `theme ` for a Theme filter.
+  now-playing cover in a slowly drifting gradient while music plays. Pick one in Settings, or type `theme ` for a Theme filter.
 - **What's New** — after an update, a short screen lists the three most important
   changes since the version you were running.
 - **Apple Music catalog fallback** — when a song isn't in your library, Cuebar
@@ -34,9 +34,10 @@ without leaving whatever you were doing.
 - **Typo tolerant** — `blinding lites` still finds *Blinding Lights*.
 - **Transport commands** — `pause`, `resume`, `next`, `previous`, `shuffle`,
   `repeat`.
-- **Now playing** — the current track shows up at the top in a large card with
-  artwork, a progress bar, and clickable play/pause, shuffle and repeat; **Return**
-  toggles play/pause.
+- **Home screen** — open Cuebar and the current track shows up at the top in a
+  large card with glowing artwork, a progress bar, and clickable play/pause,
+  shuffle and repeat (**Return** toggles play/pause), followed by your **Recently
+  Played** songs.
 - **Album artwork**, cached on disk so it appears instantly, even offline.
 - **Configurable global hotkey**, recorded from an embedded settings screen.
 - **Keyboard-first Liquid Glass UI** — no Dock icon, no clutter.

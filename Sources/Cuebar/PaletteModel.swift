@@ -55,6 +55,11 @@ final class PaletteModel: ObservableObject {
     /// The selected row's own album palette, when the Album Art theme is on.
     @Published private(set) var rowAccent: AlbumPalette?
 
+    // Home screen
+    /// The "Recently Played" shelf. Kept across openings so the shelf paints on
+    /// the first frame, then refreshed in the background.
+    @Published private(set) var recent: [RecentTrack] = []
+
     var onClose: (() -> Void)?
     /// Reports playback outcomes as toasts.
     var onToast: ((Toast) -> Void)?
@@ -85,6 +90,8 @@ final class PaletteModel: ObservableObject {
     var onSelectionChange: ((PaletteItem?) -> Void)?
     /// Applies a new hotkey; returns false when the shortcut is unavailable.
     var onHotKeyChange: ((HotKeyPreference) -> Bool)?
+    /// Reads every track's last-played age from Music; nil on failure.
+    var onFetchPlayedDates: (() async -> [PlayedEntry]?)?
 
     private let searchService: SearchService
     private let musicController: MusicController
@@ -101,6 +108,11 @@ final class PaletteModel: ObservableObject {
     private(set) var lastPollDate: Date?
     /// The scope currently being browsed (nil = not browsing).
     private var browsePreference: RankPreference?
+    /// Last-played ages from the most recent fetch.
+    private var playedEntries: [PlayedEntry] = []
+    /// When `playedEntries` was read, so ages stay correct between fetches.
+    private var playedEntriesDate = Date()
+    private var recentTask: Task<Void, Never>?
 
     /// Whether the empty-scope browse list is showing.
     var isBrowsing: Bool { browsePreference != nil }
@@ -144,7 +156,14 @@ final class PaletteModel: ObservableObject {
             .store(in: &cancellables)
 
         searchService.$isIndexing
-            .sink { [weak self] in self?.isIndexing = $0 }
+            .sink { [weak self] indexing in
+                guard let self else { return }
+                let finished = self.isIndexing && !indexing
+                self.isIndexing = indexing
+                // Played dates can land before the index does (first launch, or a
+                // rebuild); resolve them again against the fresh library.
+                if finished { self.recomputeRecent() }
+            }
             .store(in: &cancellables)
     }
 
@@ -205,8 +224,18 @@ final class PaletteModel: ObservableObject {
             return
         }
 
-        // A music scope is songs-only, so command rows are suppressed.
-        commands = scope == nil ? commandEntries(for: trimmed) : []
+        // A music scope is songs-only, so command rows are suppressed. The home
+        // screen trades the transport commands for the recent shelf.
+        if scope != nil {
+            commands = []
+        } else if trimmed.isEmpty {
+            commands = PaletteListComposer.homeCommands(
+                commandEntries(for: trimmed),
+                hasRecent: !recent.isEmpty
+            )
+        } else {
+            commands = commandEntries(for: trimmed)
+        }
 
         // Songs: only for `play <song>` or free text. A recognised non-play
         // command shows just the command. An empty scope browses that kind.
@@ -444,10 +473,57 @@ final class PaletteModel: ObservableObject {
     /// Refresh the current track from Music.app.
     func refreshNowPlaying() async {
         let track = try? await musicController.nowPlaying()
+#if DEBUG
+        if debugHoldsNowPlaying { return }
+#endif
         lastPollDate = Date()
         guard track != nowPlaying else { return }
+        let previousID = nowPlaying?.persistentID
         nowPlaying = track
+        if previousID != track?.persistentID {
+            // A new track: the one that just ended is now "recent", and the new
+            // one leaves the shelf (it has the card).
+            if previousID != nil { refreshRecentlyPlayed() }
+            recomputeRecent()
+        }
         rebuildItems()
+    }
+
+    // MARK: - Recently played
+
+    /// Re-reads last-played dates from Music in the background.
+    func refreshRecentlyPlayed() {
+        guard let fetch = onFetchPlayedDates, recentTask == nil else { return }
+        recentTask = Task { [weak self] in
+            let entries = await fetch()
+            guard let self else { return }
+            self.recentTask = nil
+            guard let entries else { return }
+            self.playedEntries = entries
+            self.playedEntriesDate = Date()
+            self.recomputeRecent()
+        }
+    }
+
+    private func recomputeRecent() {
+        let updated = RecentlyPlayed.tracks(
+            from: playedEntries,
+            library: libraryProvider.snapshot(),
+            excluding: nowPlaying?.persistentID,
+            now: playedEntriesDate
+        )
+        guard updated != recent else { return }
+        let hadShelf = !recent.isEmpty
+        recent = updated
+        // The shelf appearing (or vanishing) changes which commands the home
+        // screen shows; only rebuild the commands while the home is on screen.
+        if screen == .search, scope == nil,
+           query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           hadShelf != !updated.isEmpty {
+            queryChanged()
+        } else {
+            rebuildItems()
+        }
     }
 
     /// Toggles play/pause from the now-playing card (stays open).
@@ -501,6 +577,8 @@ final class PaletteModel: ObservableObject {
             togglePlayPause()
         case .command(let entry):
             run(entry.action, selected: nil)
+        case .recent(let track):
+            run(.music(.play(query: track.candidate.title)), selected: track.candidate)
         case .music(let candidate):
             // A library album plays start to finish; a library playlist plays
             // directly; catalog rows still can't be started.
@@ -704,7 +782,8 @@ final class PaletteModel: ObservableObject {
             // Browse mode is albums/playlists only — no now-playing row.
             nowPlaying: (browsePreference == nil && scope != .themes) ? nowPlaying : nil,
             commands: commands,
-            music: music
+            music: music,
+            recent: scope == nil ? recent : []
         )
         items = newItems
         if newItems.isEmpty {
@@ -784,6 +863,9 @@ final class PaletteModel: ObservableObject {
     }
 
 #if DEBUG
+    /// Set once a synthetic track is injected, so polls don't replace it.
+    private var debugHoldsNowPlaying = false
+
     /// Development helper: pretend the current track is playing.
     func debugForcePlaying() {
         guard let track = nowPlaying else { return }
@@ -802,6 +884,8 @@ final class PaletteModel: ObservableObject {
     /// Development helper: show a synthetic now-playing card on the default
     /// screen, so it can be captured without Music loaded.
     func debugSetNowPlaying(_ track: NowPlayingTrack) {
+        debugHoldsNowPlaying = true
+        lastPollDate = Date()
         nowPlaying = track
         rebuildItems()
     }

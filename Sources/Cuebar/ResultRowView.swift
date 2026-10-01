@@ -76,6 +76,7 @@ struct ResultRowView: View {
         case .nowPlaying(let track): return track.title
         case .command(let entry): return entry.title
         case .music(let candidate): return candidate.title
+        case .recent(let track): return track.candidate.title
         }
     }
 
@@ -84,12 +85,14 @@ struct ResultRowView: View {
         case .nowPlaying(let track): return track.subtitle
         case .command(let entry): return entry.subtitle
         case .music(let candidate): return candidate.subtitle
+        case .recent(let track): return track.candidate.subtitle
         }
     }
 
     private var badge: String? {
         switch item {
         case .nowPlaying: return nil // rendered together with the waveform
+        case .recent: return nil // shows when it was played instead
         case .command(let entry): return entry.badge
         case .music(let candidate):
             guard candidate.source == .library else { return "Catalog" }
@@ -113,6 +116,10 @@ struct ResultRowView: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
             .background(.quaternary, in: Capsule())
+        } else if case .recent(let track) = item {
+            Text(RecentlyPlayed.relativeLabel(for: track.playedAt))
+                .font(.system(size: 11, weight: .medium).monospacedDigit())
+                .foregroundStyle(.tertiary)
         } else if let badge {
             Text(badge)
                 .font(.system(size: 10, weight: .semibold))
@@ -145,7 +152,7 @@ struct ResultRowView: View {
             }
             .frame(width: 36, height: 36)
 
-        case .music:
+        case .music, .recent:
             ArtworkView(source: item.artworkSource)
         }
     }
