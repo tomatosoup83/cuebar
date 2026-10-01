@@ -4,6 +4,9 @@ import CuebarCore
 struct PaletteView: View {
     @ObservedObject var model: PaletteModel
     @FocusState private var isFieldFocused: Bool
+    /// How far the results list is scrolled, so the now-playing glow may only
+    /// spill over the search box while the card is at the top.
+    @State private var scrollOffset: CGFloat = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -112,6 +115,19 @@ struct PaletteView: View {
                     .padding(.horizontal, 10)
                     .padding(.vertical, 8)
                 }
+                // Let the now-playing glow draw up over the search box instead of
+                // being cut at the list's edge…
+                .scrollClipDisabled()
+                .mask(alignment: .bottom) {
+                    // …but only while the card is at the top. Once scrolled, the
+                    // allowance is gone so rows can't bleed over the field.
+                    Rectangle().padding(.top, -glowOverflow)
+                }
+                .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                    max(0, geometry.contentOffset.y + geometry.contentInsets.top)
+                } action: { _, offset in
+                    scrollOffset = offset
+                }
                 .onChange(of: model.selectedIndex) { _, newValue in
                     guard model.items.indices.contains(newValue) else { return }
                     withAnimation(.easeOut(duration: 0.12)) {
@@ -153,6 +169,14 @@ struct PaletteView: View {
             }
         }
     }
+
+    /// Room above the list, in points, that the glow may use. Shrinks to nothing
+    /// within the first few points of scrolling.
+    private var glowOverflow: CGFloat {
+        max(0, Self.glowReach - scrollOffset * 6)
+    }
+
+    private static let glowReach: CGFloat = 44
 
     /// True for the first row of the recent shelf, which gets a header.
     private func startsRecentSection(at index: Int) -> Bool {

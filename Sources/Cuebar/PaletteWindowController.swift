@@ -199,6 +199,16 @@ final class PaletteWindowController {
         toastController.show(toast, anchoredTo: panel.isVisible ? panel.frame : nil)
     }
 
+    /// Gives the home screen the log of tracks seen playing.
+    func setPlayHistory(_ history: PlayHistory) {
+        model.playHistory = history
+    }
+
+    /// Music started, paused or changed track.
+    func playerChanged(_ event: PlayerInfoEvent) {
+        model.playerChanged(event)
+    }
+
     /// Reflects update availability in the palette.
     func setAvailableUpdate(_ update: UpdateInfo?) {
         model.setAvailableUpdate(update)

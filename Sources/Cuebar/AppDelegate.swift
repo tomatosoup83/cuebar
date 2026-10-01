@@ -20,6 +20,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let indexStore = LibraryIndexStore()
     private let libraryFetcher = AppleScriptLibraryProvider()
     private let musicController = AppleScriptMusicController()
+    private let playHistory = PlayHistory.standard()
+    private var playerObserver: NSObjectProtocol?
     private var searchService: SearchService?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -83,6 +85,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             .store(in: &cancellables)
         paletteController = controller
+        controller.setPlayHistory(playHistory)
+        observeMusicPlayer()
 
         hotKeyManager.onHotKey = { [weak self] in self?.paletteController?.toggle() }
         if !hotKeyManager.register(preference) {
@@ -190,6 +194,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
             self?.paletteController?.showWhatsNew()
+        }
+    }
+
+    /// Logs every track Music starts playing — whether or not Cuebar started it
+    /// and whether or not the palette is open — for the Recently Played shelf.
+    private func observeMusicPlayer() {
+        playerObserver = DistributedNotificationCenter.default().addObserver(
+            forName: Notification.Name(PlayerInfoEvent.notificationName),
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let event = PlayerInfoEvent.parse(notification.userInfo) else { return }
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.playHistory.record(event)
+                self.paletteController?.playerChanged(event)
+            }
         }
     }
 

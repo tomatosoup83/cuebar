@@ -92,6 +92,8 @@ final class PaletteModel: ObservableObject {
     var onHotKeyChange: ((HotKeyPreference) -> Bool)?
     /// Reads every track's last-played age from Music; nil on failure.
     var onFetchPlayedDates: (() async -> [PlayedEntry]?)?
+    /// Tracks seen playing while Cuebar ran; merged into the recent shelf.
+    var playHistory: PlayHistory?
 
     private let searchService: SearchService
     private let musicController: MusicController
@@ -113,6 +115,9 @@ final class PaletteModel: ObservableObject {
     /// When `playedEntries` was read, so ages stay correct between fetches.
     private var playedEntriesDate = Date()
     private var recentTask: Task<Void, Never>?
+    /// The track Music has loaded, from its change notifications. Lets the shelf
+    /// leave it out even before the first poll has filled the card.
+    private var loadedTrackID: String?
 
     /// Whether the empty-scope browse list is showing.
     var isBrowsing: Bool { browsePreference != nil }
@@ -480,6 +485,12 @@ final class PaletteModel: ObservableObject {
         guard track != nowPlaying else { return }
         let previousID = nowPlaying?.persistentID
         nowPlaying = track
+        // Covers a track that was already playing when Cuebar launched, or a
+        // notification that never arrived.
+        if let track, track.isPlaying, let id = track.persistentID,
+           playHistory?.all.first?.persistentID != id {
+            playHistory?.record(id)
+        }
         if previousID != track?.persistentID {
             // A new track: the one that just ended is now "recent", and the new
             // one leaves the shelf (it has the card).
@@ -505,12 +516,25 @@ final class PaletteModel: ObservableObject {
         }
     }
 
+    /// Music announced a player change (a track started, paused or stopped).
+    func playerChanged(_ event: PlayerInfoEvent) {
+        loadedTrackID = event.loadedTrackID
+        recomputeRecent()
+    }
+
     private func recomputeRecent() {
+        let now = Date()
+        // Music's dates were read at `playedEntriesDate`; age them to now so
+        // they sort correctly against the live log.
+        let drift = now.timeIntervalSince(playedEntriesDate)
+        let fromMusic = playedEntries.map {
+            PlayedEntry(persistentID: $0.persistentID, secondsAgo: $0.secondsAgo + drift)
+        }
         let updated = RecentlyPlayed.tracks(
-            from: playedEntries,
+            from: fromMusic + (playHistory?.entries(now: now) ?? []),
             library: libraryProvider.snapshot(),
-            excluding: nowPlaying?.persistentID,
-            now: playedEntriesDate
+            excluding: nowPlaying?.persistentID ?? loadedTrackID,
+            now: now
         )
         guard updated != recent else { return }
         let hadShelf = !recent.isEmpty

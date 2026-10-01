@@ -194,6 +194,19 @@ shelf of the last 8 library songs, each with a compact "how long ago" label
   stays O(1) — emitting each played track's age relative to `current date`, which
   keeps the output locale-independent. It returns nothing when Music isn't
   running, so opening the palette never launches it.
+- **Music's `played date` is unreliable** — streamed and partly played tracks are
+  often never stamped, so the newest plays can be days stale. The shelf therefore
+  also uses `PlayHistory`: `AppDelegate` listens for Music's
+  `com.apple.Music.playerInfo` distributed notification (fired on every track
+  change, whether or not Cuebar started it and whether or not the palette is open)
+  and logs each track that starts playing to
+  `~/Library/Application Support/Cuebar/play-history.json` (200 tracks, one entry
+  per track at its latest play). The notification's `PersistentID` is a 64-bit
+  integer; formatted as 16 upper-case hex digits it equals the ID AppleScript and
+  the library index use. The two sources are merged by age and the newest play
+  wins. Tracks that were already playing when Cuebar launched are logged on the
+  first poll. Only library tracks can appear (catalog-only plays can't be played
+  from here).
 - `RecentlyPlayed` (Core, pure) parses that, resolves ids against the index
   (dropping deleted tracks and non-songs), de-duplicates, sorts newest-first with a
   deterministic tie-break, leaves out the track that is playing (it has the card)
@@ -226,8 +239,11 @@ still toggles play/pause, and the footer then reads **"⏎ play/pause"**.
   does.
 - **Artwork glow**: a blurred, saturated copy of the cover sits behind the
   artwork, added as light (`plusLighter`) so it still reads when the cover matches
-  the card. It breathes on a slow ~4 s cycle while playing and dims when paused;
-  Reduce Motion holds it still.
+  It breathes on a slow ~4 s cycle while playing and dims when paused;
+  Reduce Motion holds it still. The results list is a `ScrollView`, which would
+  clip the glow at the search box, so the list uses `scrollClipDisabled()` with a
+  mask that reaches 44 pt above it — and shrinks to nothing within a few points of
+  scrolling, so rows never bleed over the field.
 
 ## Updates
 
@@ -386,6 +402,7 @@ Sources/CuebarCore/          # testable, no UI
   LibraryAlbumIndex.swift    # groups library songs into playable albums
   LibraryBrowse.swift        # random album/playlist list for empty scopes
   RecentlyPlayed.swift       # played-date parsing + the home screen's recent shelf
+  PlayHistory.swift          # Music playerInfo events + persisted log of plays
   Toast.swift                # transient feedback model (+ per-kind duration)
   PlaybackFeedback.swift     # toast copy for playback outcomes
   ToastCenter.swift          # current toast + auto-dismiss (injectable timing)
@@ -477,7 +494,8 @@ not captured, but layout, rows and text are.
 
 ## Tests
 
-`make test` runs 258 unit tests covering the recently played shelf (parsing,
+`make test` runs 268 unit tests covering the play history log (notification
+parsing, persistence, merging with Music's dates), the recently played shelf (parsing,
 ordering, exclusions, relative labels, home composition), command parsing, command matching
 (including that `play take on me` matches no command), now-playing parsing
 (incl. shuffle/repeat) and progress interpolation, list composition, artwork
