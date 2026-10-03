@@ -271,13 +271,20 @@ key secret).
 
 Two themes, chosen in **Settings → Theme** or by typing `theme`:
 
-- **Tahoe** (default) — plain Liquid Glass, unchanged.
-- **Album Art** — a light gradient derived from the **now-playing track's** cover
-  washes the panel *behind* the glass, and the selected row carries a small accent
-  in its own album's colour.
+- **Album Art** (default) — a light gradient derived from album art washes the
+  panel *behind* the glass, and the selected row carries a small accent in its
+  own album's colour.
+- **Tahoe** — plain Liquid Glass, unchanged.
 
-The ambient gradient is keyed to the now-playing track, not the selected row:
-per-row ambient tinting would strobe the whole surface on every arrow key.
+By default the ambient gradient **follows the highlighted row** rather than the
+now-playing track, fading from album to album as you move. Turn the option off to
+key it to the now-playing track instead; following needs the 350 ms pause below,
+because per-row tinting with no pause would strobe the whole surface on every
+arrow key.
+
+Upgrading from an earlier release moves you onto this new default **once** (Album
+Art + follow the highlighted row); after that, your choice — including going back
+to Tahoe — is kept.
 
 - The wash is a **drifting mesh** (`AmbientMesh`, a 3×3 `MeshGradient`): corners
   pinned, edge midpoints sliding along their edges and the centre wandering on a
@@ -317,8 +324,9 @@ per-row ambient tinting would strobe the whole surface on every arrow key.
   appearance-adaptive system colours.
   Which rows qualify is `RowTintPolicy` — the now-playing row always, and any row
   when the option below is on.
-- **Follow the Highlighted Row** (Settings → Theme, Album Art only): the whole
-  panel colour follows the highlighted row instead of the now-playing track, with
+- **Follow the Highlighted Row** (Settings → Theme, Album Art only; **on by
+  default**): the whole panel colour follows the highlighted row instead of the
+  now-playing track, with
   a **350 ms pause** before each change and a **700 ms crossfade**. The pause is
   *leading* — it is not restarted while the user keeps moving, so the colour always
   lands on the row they stop on, and while following, the **wash carries the

@@ -168,8 +168,8 @@ final class PaletteModel: ObservableObject {
         musicController: MusicController,
         libraryProvider: LibrarySearchProvider,
         hotKey: HotKeyPreference = .default,
-        theme: ThemeID = .tahoe,
-        ambientFollowsSelection: Bool = false
+        theme: ThemeID = .albumArt,
+        ambientFollowsSelection: Bool = true
     ) {
         self.searchService = searchService
         self.musicController = musicController

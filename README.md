@@ -25,8 +25,10 @@ without leaving whatever you were doing.
   an error (not in your library, missing Automation permission).
 - **Self-updating** — checks GitHub on launch; when a signed release is newer it
   can download, verify and relaunch into it (`update`).
-- **Themes** — Tahoe (plain glass) or Album Art, which tints the panel with the
-  now-playing cover in a slowly drifting gradient while music plays. Pick one in Settings, or type `theme ` for a Theme filter.
+- **Themes** — Album Art (the default) tints the panel with the cover of the track
+  you're on — or, by default, whichever row you highlight — in a slowly drifting
+  gradient while music plays. Prefer plain glass? Pick **Tahoe** in Settings, or
+  type `theme ` for a Theme filter.
 - **What's New** — after an update, a short screen lists the three most important
   changes since the version you were running.
 - **Apple Music catalog fallback** — when a song isn't in your library, Cuebar

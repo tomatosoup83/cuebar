@@ -58,8 +58,8 @@ final class PaletteWindowController {
         musicController: MusicController,
         libraryProvider: LibrarySearchProvider,
         hotKey: HotKeyPreference = .default,
-        theme: ThemeID = .tahoe,
-        ambientFollowsSelection: Bool = false
+        theme: ThemeID = .albumArt,
+        ambientFollowsSelection: Bool = true
     ) {
         model = PaletteModel(
             searchService: searchService,

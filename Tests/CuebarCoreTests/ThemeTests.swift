@@ -57,27 +57,63 @@ final class ThemeStoreTests: XCTestCase {
         return defaults
     }
 
-    func testDefaultsToTahoe() {
-        XCTAssertEqual(ThemeStore(defaults: makeDefaults()).theme, .tahoe)
+    func testDefaultsToAlbumArt() {
+        XCTAssertEqual(ThemeStore(defaults: makeDefaults()).theme, .albumArt)
     }
 
     func testRoundTrip() {
         let store = ThemeStore(defaults: makeDefaults())
-        store.theme = .albumArt
-        XCTAssertEqual(store.theme, .albumArt)
+        store.theme = .tahoe
+        XCTAssertEqual(store.theme, .tahoe)
     }
 
     func testUnknownValueFallsBack() {
         let defaults = makeDefaults()
         defaults.set("nonsense", forKey: "themeID")
-        XCTAssertEqual(ThemeStore(defaults: defaults).theme, .tahoe)
+        XCTAssertEqual(ThemeStore(defaults: defaults).theme, .albumArt)
     }
 
-    func testFollowsSelectionDefaultsOffAndRoundTrips() {
+    func testFollowsSelectionDefaultsOnAndRoundTrips() {
         let store = ThemeStore(defaults: makeDefaults())
-        XCTAssertFalse(store.ambientFollowsSelection)
-        store.ambientFollowsSelection = true
         XCTAssertTrue(store.ambientFollowsSelection)
+        store.ambientFollowsSelection = false
+        XCTAssertFalse(store.ambientFollowsSelection)
+    }
+
+    func testMigrationMovesATahoeUserToTheNewDefault() {
+        let defaults = makeDefaults()
+        defaults.set("tahoe", forKey: "themeID")
+        defaults.set(false, forKey: "ambientFollowsSelection")
+
+        let store = ThemeStore(defaults: defaults)
+        store.applyAlbumArtDefaultIfNeeded()
+
+        XCTAssertEqual(store.theme, .albumArt)
+        XCTAssertTrue(store.ambientFollowsSelection)
+    }
+
+    func testMigrationGivesAFreshInstallTheNewDefault() {
+        let store = ThemeStore(defaults: makeDefaults())
+        store.applyAlbumArtDefaultIfNeeded()
+
+        XCTAssertEqual(store.theme, .albumArt)
+        XCTAssertTrue(store.ambientFollowsSelection)
+    }
+
+    func testMigrationOnlyRunsOnceAndKeepsLaterChoices() {
+        let defaults = makeDefaults()
+        defaults.set("tahoe", forKey: "themeID")
+        let store = ThemeStore(defaults: defaults)
+        store.applyAlbumArtDefaultIfNeeded()
+
+        // The user deliberately goes back to Tahoe and turns the follow off.
+        store.theme = .tahoe
+        store.ambientFollowsSelection = false
+
+        // A later launch must not undo that choice.
+        store.applyAlbumArtDefaultIfNeeded()
+        XCTAssertEqual(store.theme, .tahoe)
+        XCTAssertFalse(store.ambientFollowsSelection)
     }
 }
 

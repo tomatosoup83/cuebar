@@ -39,6 +39,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let preference = hotKeyStore.load()
 
+        // Upgraders carry their old theme in UserDefaults; move them onto the new
+        // Album Art default once, before the palette reads it.
+        themeStore.applyAlbumArtDefaultIfNeeded()
+
         let controller = PaletteWindowController(
             searchService: searchService,
             musicController: musicController,
