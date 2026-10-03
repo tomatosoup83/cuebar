@@ -168,6 +168,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if environment["CUEBAR_FAKE_NOWPLAYING"] == "1" {
                     self.paletteController?.debugShowFakeNowPlaying()
                 }
+                if let actions = environment["CUEBAR_OPEN_ACTIONS"] {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                        if actions == "playlists" {
+                            self?.paletteController?.debugOpenActionsPlaylists()
+                        } else {
+                            self?.paletteController?.debugOpenActionsMenu()
+                        }
+                    }
+                }
                 if let raw = environment["CUEBAR_FOLLOW_SELECTION"] {
                     self.paletteController?.debugSetFollowsSelection(raw == "1")
                 }

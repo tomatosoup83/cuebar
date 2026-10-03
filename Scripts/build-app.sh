@@ -28,6 +28,22 @@ if [[ -f "$ROOT/Resources/AppIcon.icns" ]]; then
   cp "$ROOT/Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 fi
 
+# Stamp the build channel so non-release builds can show an "Experimental"
+# badge in the palette. An explicit CUEBAR_BUILD_CHANNEL wins (release.sh sets
+# it), otherwise the current branch decides.
+CHANNEL="${CUEBAR_BUILD_CHANNEL:-}"
+if [[ -z "$CHANNEL" ]]; then
+  BRANCH="$(git -C "$ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+  if [[ "$BRANCH" == "experimental" || "$BRANCH" == exp* ]]; then
+    CHANNEL="experimental"
+  else
+    CHANNEL="release"
+  fi
+fi
+/usr/libexec/PlistBuddy -c "Delete :CuebarBuildChannel" "$APP/Contents/Info.plist" >/dev/null 2>&1 || true
+/usr/libexec/PlistBuddy -c "Add :CuebarBuildChannel string $CHANNEL" "$APP/Contents/Info.plist"
+echo "==> build channel: $CHANNEL"
+
 echo "==> ad-hoc codesign"
 codesign --force --sign - --timestamp=none "$APP" >/dev/null 2>&1 || \
   echo "warning: codesign failed (the app may still run)"

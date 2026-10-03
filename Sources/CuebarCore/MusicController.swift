@@ -25,6 +25,16 @@ public protocol MusicController: Sendable {
     func setRepeat(_ mode: RepeatMode) async throws
     /// The track Music.app currently has loaded, or nil when unavailable.
     func nowPlaying() async throws -> NowPlayingTrack?
+    /// Whether a library track is in Music's "Loved" (heart) list.
+    func isLoved(persistentID: String) async throws -> Bool
+    /// Sets a library track's "Loved" state.
+    func setLoved(_ loved: Bool, persistentID: String) async throws
+    /// Adds a library track to a user playlist.
+    func addToPlaylist(trackPersistentID: String, playlistPersistentID: String) async throws
+    /// Reveals a library track in Music and brings Music to the front.
+    func revealInMusic(persistentID: String) async throws
+    /// Opens a catalog item's page in Music.app.
+    func openInMusic(url: URL) async throws
 }
 
 /// Errors thrown while starting playback.
@@ -149,6 +159,31 @@ public final class AppleScriptMusicController: MusicController, @unchecked Senda
         return NowPlayingTrack.parse(raw)
     }
 
+    public func isLoved(persistentID: String) async throws -> Bool {
+        let raw = try await runner.string(Self.lovedQueryScript(persistentID: persistentID))
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return value == "true" || value == "1"
+    }
+
+    public func setLoved(_ loved: Bool, persistentID: String) async throws {
+        try await runner.run(Self.setLovedScript(loved, persistentID: persistentID))
+    }
+
+    public func addToPlaylist(trackPersistentID: String, playlistPersistentID: String) async throws {
+        try await runner.run(Self.addToPlaylistScript(
+            trackPersistentID: trackPersistentID,
+            playlistPersistentID: playlistPersistentID
+        ))
+    }
+
+    public func revealInMusic(persistentID: String) async throws {
+        try await runner.run(Self.revealScript(persistentID: persistentID))
+    }
+
+    public func openInMusic(url: URL) async throws {
+        try await runner.run(Self.openLocationScript(url: url))
+    }
+
     /// Whether Music.app is currently running.
     static var isMusicRunning: Bool {
         NSWorkspace.shared.runningApplications.contains {
@@ -223,5 +258,57 @@ public final class AppleScriptMusicController: MusicController, @unchecked Senda
         value
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
+    }
+
+    // MARK: - Quick-action scripts
+
+    /// Reads a library track's "Loved" state as a string.
+    static func lovedQueryScript(persistentID: String) -> String {
+        """
+        tell application "Music"
+            set t to (some track of library playlist 1 whose persistent ID is "\(escape(persistentID))")
+            return (loved of t) as string
+        end tell
+        """
+    }
+
+    /// Sets a library track's "Loved" state.
+    static func setLovedScript(_ loved: Bool, persistentID: String) -> String {
+        """
+        tell application "Music"
+            set t to (some track of library playlist 1 whose persistent ID is "\(escape(persistentID))")
+            set loved of t to \(loved ? "true" : "false")
+        end tell
+        """
+    }
+
+    /// Adds a library track to a user playlist.
+    static func addToPlaylistScript(trackPersistentID: String, playlistPersistentID: String) -> String {
+        """
+        tell application "Music"
+            set t to (some track of library playlist 1 whose persistent ID is "\(escape(trackPersistentID))")
+            duplicate t to (first user playlist whose persistent ID is "\(escape(playlistPersistentID))")
+        end tell
+        """
+    }
+
+    /// Selects a library track in Music's window and brings Music forward.
+    static func revealScript(persistentID: String) -> String {
+        """
+        tell application "Music"
+            reveal (some track of library playlist 1 whose persistent ID is "\(escape(persistentID))")
+            activate
+        end tell
+        """
+    }
+
+    /// Opens a catalog URL in Music.
+    static func openLocationScript(url: URL) -> String {
+        """
+        tell application "Music"
+            activate
+            open location "\(escape(url.absoluteString))"
+        end tell
+        """
     }
 }

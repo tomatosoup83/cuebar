@@ -34,6 +34,8 @@ echo "==> Version $VERSION (build $BUILD)"
 /usr/bin/sed -i '' -E "s#Cuebar/[0-9]+\.[0-9]+ \(macOS\)#Cuebar/${MAJOR}.${MINOR} (macOS)#" Sources/CuebarCore/SearchProviders.swift
 
 echo "==> Building"
+# Releases always ship as the release channel, even if cut from a side branch.
+export CUEBAR_BUILD_CHANNEL=release
 ./Scripts/build-app.sh
 
 echo "==> Packaging Cuebar.zip"

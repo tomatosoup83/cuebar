@@ -58,7 +58,33 @@ struct PaletteView: View {
         VStack(spacing: 0) {
             searchField
             Divider().opacity(0.6)
-            content
+            ZStack(alignment: .bottomTrailing) {
+                content
+                if let menu = model.actionsMenu {
+                    // Catches taps outside the popup so clicking the results
+                    // dismisses it, Raycast-style.
+                    Color.black.opacity(0.001)
+                        .contentShape(Rectangle())
+                        .onTapGesture { model.closeActionsMenu() }
+                        .zIndex(1)
+                    ActionsMenuView(model: model, menu: menu)
+                        // Only the complete popup transforms; its layout and
+                        // rows must not inherit the presentation animation.
+                        .transaction { $0.animation = nil }
+                        .compositingGroup()
+                        .transition(
+                            reduceMotion
+                                ? .opacity
+                                : .scale(scale: 0.85, anchor: .bottomTrailing)
+                                    .combined(with: .opacity)
+                        )
+                        .padding(10)
+                        // Keep the outgoing popup above the results while its
+                        // removal transition finishes.
+                        .zIndex(2)
+                }
+            }
+            .animation(reduceMotion ? nil : .smooth(duration: 0.16), value: model.isActionsMenuOpen)
             Divider().opacity(0.6)
             footer
         }
@@ -86,6 +112,7 @@ struct PaletteView: View {
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 16)
+        .allowsHitTesting(!model.isActionsMenuOpen)
     }
 
     private var fieldPlaceholder: String {
@@ -223,6 +250,12 @@ struct PaletteView: View {
                     .multilineTextAlignment(.center)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: 420)
+            } else if model.isSearching {
+                // A search that has produced no rows yet (e.g. waiting on the
+                // catalog fallback) shouldn't read as “no matches”.
+                Text("Searching…")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
             } else {
                 Text("No matches")
                     .font(.system(size: 13))
@@ -257,6 +290,11 @@ struct PaletteView: View {
                     .foregroundStyle(.secondary)
             } else {
                 KeyHint(key: "⌘,", label: "settings")
+                Divider().frame(height: 12)
+            }
+            KeyHint(key: "⌘K", label: "actions")
+            if ExperimentalBadge.isExperimental {
+                ExperimentalBadge()
             }
         }
         .padding(.horizontal, 18)

@@ -321,6 +321,17 @@ final class PaletteWindowController {
         }
     }
 
+    /// Development helper: open the ⌘K actions menu for the highlighted row.
+    func debugOpenActionsMenu() {
+        model.openActionsMenu()
+    }
+
+    /// Development helper: open the "Add to Playlist" submenu.
+    func debugOpenActionsPlaylists() {
+        model.openActionsMenu()
+        model.runQuickAction(.openAddToPlaylist)
+    }
+
     /// Development helper: jump straight to the onboarding screen.
     func debugOpenOnboarding() {
         model.startOnboarding()
@@ -527,6 +538,46 @@ final class PaletteWindowController {
                 default:
                     return event
                 }
+            }
+
+            // ⌘K actions menu owns the keyboard while it is open.
+            if self.model.isActionsMenuOpen {
+                switch Int(event.keyCode) {
+                case kVK_Escape:
+                    self.model.backActionsMenu()
+                    return nil
+                case kVK_UpArrow:
+                    self.model.moveActionsSelection(by: -1)
+                    return nil
+                case kVK_DownArrow:
+                    self.model.moveActionsSelection(by: 1)
+                    return nil
+                case kVK_Return, kVK_ANSI_KeypadEnter:
+                    self.model.activateActionsSelection()
+                    return nil
+                default:
+                    break
+                }
+                if event.modifierFlags.contains(.command),
+                   event.charactersIgnoringModifiers?.lowercased() == "k" {
+                    self.model.closeActionsMenu()
+                    return nil
+                }
+                if event.modifierFlags.contains(.command),
+                   event.charactersIgnoringModifiers == "," {
+                    self.model.closeActionsMenu()
+                    self.model.openSettings()
+                    return nil
+                }
+                // Everything else types into the actions filter field.
+                return event
+            }
+
+            // ⌘K opens the actions menu for the highlighted row.
+            if event.modifierFlags.contains(.command),
+               event.charactersIgnoringModifiers?.lowercased() == "k" {
+                self.model.openActionsMenu()
+                return nil
             }
 
             // ⌘, opens settings from the search screen.

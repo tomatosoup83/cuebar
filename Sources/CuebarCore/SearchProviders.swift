@@ -54,6 +54,12 @@ public final class LibrarySearchProvider: MusicSearchProviding, @unchecked Senda
         return playlists.count
     }
 
+    /// All indexed user playlists, for the "Add to Playlist" actions menu.
+    public func playlistSnapshot() -> [MusicCandidate] {
+        lock.lock(); defer { lock.unlock() }
+        return playlists
+    }
+
     /// The ordered tracks of a library album, or nil when unknown.
     public func tracks(forAlbumID id: String) -> [MusicCandidate]? {
         lock.lock(); defer { lock.unlock() }

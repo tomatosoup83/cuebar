@@ -300,6 +300,9 @@ struct SettingsView: View {
             KeyHint(key: "⏎", label: "select")
             KeyHint(key: "esc", label: "back")
             Spacer()
+            if ExperimentalBadge.isExperimental {
+                ExperimentalBadge()
+            }
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 10)

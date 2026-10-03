@@ -17,6 +17,19 @@ enum OnboardingStep: Int, CaseIterable, Equatable {
     case ready
 }
 
+/// Which list the ⌘K actions menu is showing.
+enum ActionsMenuMode: Equatable {
+    case main
+    case playlists
+}
+
+/// Presentation state for the ⌘K actions menu.
+struct ActionsMenuState: Equatable {
+    var mode: ActionsMenuMode = .main
+    var selection: Int = 0
+    var query: String = ""
+}
+
 /// Presentation state for the palette.
 @MainActor
 final class PaletteModel: ObservableObject {
@@ -118,6 +131,28 @@ final class PaletteModel: ObservableObject {
     /// The track Music has loaded, from its change notifications. Lets the shelf
     /// leave it out even before the first poll has filled the card.
     private var loadedTrackID: String?
+    /// The query whose results the list currently shows (or is waiting on). A
+    /// newer query leaves the previous list up until its own results land, so
+    /// fast typing never flashes an empty state or mixes two queries' rows.
+    private var resultsQuery: SearchQuery?
+    /// True while a song search is in flight and the list is frozen on the
+    /// previous query's rows.
+    private var isSearchPending = false
+
+    // ⌘K actions menu
+    /// The menu's state, or nil when it is closed.
+    @Published private(set) var actionsMenu: ActionsMenuState?
+    /// The row the open menu belongs to, snapshotted so background refreshes
+    /// can't move it out from under the user.
+    private var actionsTarget: PaletteItem?
+    /// The library track ID for the target, when it has one (enables Like /
+    /// Add to Playlist).
+    private var actionsLibraryTrackID: String?
+    /// The target track's Loved state, fetched when the menu opens.
+    @Published private(set) var actionsLoved: Bool?
+    private var actionsLovedTask: Task<Void, Never>?
+    /// Changes when the actions search field should take focus.
+    @Published private(set) var actionsFocusToken = UUID()
 
     /// Whether the empty-scope browse list is showing.
     var isBrowsing: Bool { browsePreference != nil }
@@ -148,6 +183,7 @@ final class PaletteModel: ObservableObject {
             .sink { [weak self] newResults in
                 guard let self else { return }
                 self.music = newResults
+                self.isSearchPending = false
                 self.rebuildItems()
             }
             .store(in: &cancellables)
@@ -157,7 +193,16 @@ final class PaletteModel: ObservableObject {
             .store(in: &cancellables)
 
         searchService.$isSearching
-            .sink { [weak self] in self?.isSearching = $0 }
+            .sink { [weak self] searching in
+                guard let self else { return }
+                self.isSearching = searching
+                // Safety net: if a search ends without ever publishing results
+                // (both providers failed), don't leave the list frozen forever.
+                if !searching, self.isSearchPending {
+                    self.isSearchPending = false
+                    self.rebuildItems()
+                }
+            }
             .store(in: &cancellables)
 
         searchService.$isIndexing
@@ -189,6 +234,14 @@ final class PaletteModel: ObservableObject {
         selectedIndex = 0
         statusMessage = nil
         isSearching = false
+        resultsQuery = nil
+        isSearchPending = false
+        actionsMenu = nil
+        actionsTarget = nil
+        actionsLibraryTrackID = nil
+        actionsLoved = nil
+        actionsLovedTask?.cancel()
+        actionsLovedTask = nil
         screen = .search
         isRecordingHotKey = false
         settingsMessage = nil
@@ -218,6 +271,8 @@ final class PaletteModel: ObservableObject {
         // after it narrows the options.
         if scope == .themes {
             browsePreference = nil
+            resultsQuery = nil
+            isSearchPending = false
             searchService.clear()
             music = []
             commands = ThemeScopeMenu.entries(
@@ -246,8 +301,17 @@ final class PaletteModel: ObservableObject {
         // command shows just the command. An empty scope browses that kind.
         if let term = CommandParser.searchTerm(for: CommandParser.parse(query)), !term.isEmpty {
             browsePreference = nil
-            searchService.updateQuery(SearchQuery(term: term, preference: scope?.rankPreference ?? .songs))
+            let searchQuery = SearchQuery(term: term, preference: scope?.rankPreference ?? .songs)
+            if searchQuery != resultsQuery {
+                resultsQuery = searchQuery
+                // Keep the current rows until these land, so typing can't flash an
+                // empty state or compose two queries' results together.
+                isSearchPending = true
+                searchService.updateQuery(searchQuery)
+            }
         } else if let browse = scope?.rankPreference {
+            resultsQuery = nil
+            isSearchPending = false
             if browsePreference != browse {
                 browsePreference = browse
                 selectedIndex = 0
@@ -255,11 +319,17 @@ final class PaletteModel: ObservableObject {
             }
         } else {
             browsePreference = nil
+            resultsQuery = nil
+            isSearchPending = false
             searchService.clear()
             music = []
         }
 
-        rebuildItems()
+        // A newer song search owns the next rebuild; keep the old rows until it
+        // publishes its results.
+        if !isSearchPending {
+            rebuildItems()
+        }
     }
 
     /// Drops the active scope, returning to a plain search.
@@ -685,6 +755,242 @@ final class PaletteModel: ObservableObject {
         return LibraryResolver.resolve(candidate, in: libraryProvider.snapshot())
     }
 
+    // MARK: - ⌘K actions menu
+
+    var isActionsMenuOpen: Bool { actionsMenu != nil }
+
+    /// The target row's title, for the menu header and toast copy.
+    var actionsTitle: String { Self.title(for: actionsTarget) }
+
+    /// The target row's artist/album line, for the menu header.
+    var actionsSubtitle: String { Self.subtitle(for: actionsTarget) }
+
+    /// The rows the open menu shows, after filtering.
+    var visibleActionsItems: [QuickActionItem] {
+        guard let menu = actionsMenu else { return [] }
+        switch menu.mode {
+        case .main:
+            guard let target = actionsTarget else { return [] }
+            let all = QuickActions.items(
+                for: target,
+                loved: actionsLoved,
+                canLike: actionsLibraryTrackID != nil
+            )
+            return QuickActions.filter(all, query: menu.query)
+        case .playlists:
+            return QuickActions.filter(QuickActions.playlistItems(actionsPlaylists), query: menu.query)
+        }
+    }
+
+    /// Opens the actions menu for the highlighted row.
+    func openActionsMenu() {
+        guard let target = selectedItem else { return }
+        actionsTarget = target
+        actionsLibraryTrackID = libraryTrackID(for: target)
+        actionsLoved = nil
+        actionsMenu = ActionsMenuState(mode: .main, selection: 0, query: "")
+        actionsFocusToken = UUID()
+        refreshActionsLoved()
+    }
+
+    func closeActionsMenu() {
+        guard actionsMenu != nil else { return }
+        actionsMenu = nil
+        actionsTarget = nil
+        actionsLibraryTrackID = nil
+        actionsLoved = nil
+        actionsLovedTask?.cancel()
+        actionsLovedTask = nil
+        requestFocus()
+    }
+
+    /// Esc inside the menu: back from the playlist list, else close.
+    func backActionsMenu() {
+        guard var menu = actionsMenu else { return }
+        if menu.mode == .playlists {
+            menu.mode = .main
+            menu.query = ""
+            menu.selection = 0
+            actionsMenu = menu
+            actionsFocusToken = UUID()
+        } else {
+            closeActionsMenu()
+        }
+    }
+
+    func setActionsQuery(_ query: String) {
+        guard var menu = actionsMenu else { return }
+        menu.query = query
+        menu.selection = 0
+        actionsMenu = menu
+    }
+
+    func moveActionsSelection(by delta: Int) {
+        guard var menu = actionsMenu else { return }
+        let count = visibleActionsItems.count
+        guard count > 0 else { return }
+        menu.selection = min(max(menu.selection + delta, 0), count - 1)
+        actionsMenu = menu
+    }
+
+    func activateActionsSelection() {
+        let items = visibleActionsItems
+        guard let menu = actionsMenu, items.indices.contains(menu.selection) else { return }
+        runQuickAction(items[menu.selection].action)
+    }
+
+    func runQuickAction(_ action: QuickAction) {
+        switch action {
+        case .primary:
+            closeActionsMenu()
+            executeSelection()
+        case .like:
+            setLoved(true)
+        case .unlike:
+            setLoved(false)
+        case .openAddToPlaylist:
+            guard actionsLibraryTrackID != nil else { return }
+            actionsMenu = ActionsMenuState(mode: .playlists, selection: 0, query: "")
+            actionsFocusToken = UUID()
+        case .addToPlaylist(let playlistID, let name):
+            addToPlaylist(playlistID: playlistID, name: name)
+        case .openInMusic:
+            openInMusic()
+        case .dismiss:
+            closeActionsMenu()
+        }
+    }
+
+    private var actionsPlaylists: [MusicCandidate] {
+        libraryProvider.playlistSnapshot().filter {
+            $0.title != AppleScriptMusicController.albumQueuePlaylistName
+        }
+    }
+
+    private func refreshActionsLoved() {
+        actionsLovedTask?.cancel()
+        actionsLovedTask = nil
+        guard let id = actionsLibraryTrackID else {
+            actionsLoved = nil
+            return
+        }
+        actionsLoved = nil
+        actionsLovedTask = Task { [weak self] in
+            guard let self else { return }
+            let value = try? await self.musicController.isLoved(persistentID: id)
+            guard !Task.isCancelled,
+                  self.actionsMenu != nil,
+                  self.actionsLibraryTrackID == id else { return }
+            self.actionsLoved = value
+        }
+    }
+
+    private func setLoved(_ loved: Bool) {
+        guard let id = actionsLibraryTrackID else { return }
+        let title = actionsTitle
+        let toast = loved ? PlaybackFeedback.liked(title) : PlaybackFeedback.unliked(title)
+        closeActionsMenu()
+        statusMessage = nil
+        Task {
+            do {
+                try await self.musicController.setLoved(loved, persistentID: id)
+                self.onToast?(toast)
+            } catch {
+                let failure = PlaybackFeedback.failure(error)
+                self.statusMessage = failure.message
+                self.onToast?(failure)
+            }
+        }
+    }
+
+    private func addToPlaylist(playlistID: String, name: String) {
+        guard let trackID = actionsLibraryTrackID else { return }
+        let title = actionsTitle
+        closeActionsMenu()
+        statusMessage = nil
+        Task {
+            do {
+                try await self.musicController.addToPlaylist(
+                    trackPersistentID: trackID,
+                    playlistPersistentID: playlistID
+                )
+                self.onToast?(PlaybackFeedback.addedToPlaylist(title, playlist: name))
+            } catch {
+                let failure = PlaybackFeedback.failure(error)
+                self.statusMessage = failure.message
+                self.onToast?(failure)
+            }
+        }
+    }
+
+    private func openInMusic() {
+        guard let item = actionsTarget else { return }
+        let libraryID = actionsLibraryTrackID
+        let catalogURL: URL? = {
+            guard case .music(let candidate) = item else { return nil }
+            return candidate.playbackURL
+        }()
+        let title = actionsTitle
+        closeActionsMenu()
+        statusMessage = nil
+        Task {
+            do {
+                if let libraryID {
+                    try await self.musicController.revealInMusic(persistentID: libraryID)
+                } else if let catalogURL {
+                    try await self.musicController.openInMusic(url: catalogURL)
+                } else {
+                    return
+                }
+                self.onToast?(PlaybackFeedback.openedInMusic(title))
+            } catch {
+                let failure = PlaybackFeedback.failure(error)
+                self.statusMessage = failure.message
+                self.onToast?(failure)
+            }
+        }
+    }
+
+    /// The library track a row maps to, for Like / Add to Playlist.
+    private func libraryTrackID(for item: PaletteItem) -> String? {
+        switch item {
+        case .nowPlaying(let track):
+            return track.persistentID
+        case .recent(let track):
+            return track.candidate.persistentID
+        case .music(let candidate):
+            if candidate.source == .library, candidate.kind == .song {
+                return candidate.persistentID
+            }
+            if candidate.source == .catalog {
+                return LibraryResolver.resolve(candidate, in: libraryProvider.snapshot())?.persistentID
+            }
+            return nil
+        case .command:
+            return nil
+        }
+    }
+
+    static func title(for item: PaletteItem?) -> String {
+        guard let item else { return "" }
+        switch item {
+        case .nowPlaying(let track): return track.title
+        case .command(let entry): return entry.title
+        case .music(let candidate): return candidate.title
+        case .recent(let track): return track.candidate.title
+        }
+    }
+
+    static func subtitle(for item: PaletteItem?) -> String {
+        guard let item else { return "" }
+        switch item {
+        case .nowPlaying(let track): return track.subtitle
+        case .command(let entry): return entry.subtitle
+        case .music(let candidate): return candidate.subtitle
+        case .recent(let track): return track.candidate.subtitle
+        }
+    }
+
     // MARK: - Settings
 
     func openSettings() {
@@ -801,6 +1107,9 @@ final class PaletteModel: ObservableObject {
     // MARK: - Internals
 
     private func rebuildItems() {
+        // While a search is in flight the previous rows stay frozen; the results
+        // sink rebuilds once the new query's rows land.
+        guard !isSearchPending else { return }
         let newItems = PaletteListComposer.compose(
             query: query,
             // Browse mode is albums/playlists only — no now-playing row.

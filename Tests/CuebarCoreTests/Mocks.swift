@@ -46,6 +46,11 @@ final class MockMusicController: MusicController, @unchecked Sendable {
         case shuffle(Bool?)
         case shuffleEnabled
         case setRepeat(RepeatMode)
+        case isLoved(String)
+        case setLoved(Bool, String)
+        case addToPlaylist(String, String)
+        case reveal(String)
+        case openInMusic(String)
     }
 
     private let lock = NSLock()
@@ -54,6 +59,7 @@ final class MockMusicController: MusicController, @unchecked Sendable {
     var nowPlayingResult: NowPlayingTrack?
     var shuffleEnabledResult = false
     var permissionResult = true
+    var lovedResult = false
 
     var calls: [Call] {
         lock.lock(); defer { lock.unlock() }
@@ -93,4 +99,29 @@ final class MockMusicController: MusicController, @unchecked Sendable {
     func setRepeat(_ mode: RepeatMode) async throws { record(.setRepeat(mode)) }
     func checkAutomationPermission() async -> Bool { permissionResult }
     func nowPlaying() async throws -> NowPlayingTrack? { nowPlayingResult }
+
+    func isLoved(persistentID: String) async throws -> Bool {
+        record(.isLoved(persistentID))
+        return lovedResult
+    }
+
+    func setLoved(_ loved: Bool, persistentID: String) async throws {
+        if let errorToThrow { throw errorToThrow }
+        record(.setLoved(loved, persistentID))
+    }
+
+    func addToPlaylist(trackPersistentID: String, playlistPersistentID: String) async throws {
+        if let errorToThrow { throw errorToThrow }
+        record(.addToPlaylist(trackPersistentID, playlistPersistentID))
+    }
+
+    func revealInMusic(persistentID: String) async throws {
+        if let errorToThrow { throw errorToThrow }
+        record(.reveal(persistentID))
+    }
+
+    func openInMusic(url: URL) async throws {
+        if let errorToThrow { throw errorToThrow }
+        record(.openInMusic(url.absoluteString))
+    }
 }

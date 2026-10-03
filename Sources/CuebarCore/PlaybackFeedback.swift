@@ -27,6 +27,24 @@ public enum PlaybackFeedback {
         return Toast(kind: .success, message: "Playing playlist “\(playlist.title)”", detail: count)
     }
 
+    // MARK: - Quick actions
+
+    public static func liked(_ title: String) -> Toast {
+        Toast(kind: .success, message: "Added to Loved", detail: title)
+    }
+
+    public static func unliked(_ title: String) -> Toast {
+        Toast(kind: .success, message: "Removed from Loved", detail: title)
+    }
+
+    public static func addedToPlaylist(_ title: String, playlist: String) -> Toast {
+        Toast(kind: .success, message: "Added to “\(playlist)”", detail: title)
+    }
+
+    public static func openedInMusic(_ title: String) -> Toast {
+        Toast(kind: .success, message: "Opened in Music", detail: title)
+    }
+
     // MARK: - Library index
 
     public static func rebuildingIndex() -> Toast {

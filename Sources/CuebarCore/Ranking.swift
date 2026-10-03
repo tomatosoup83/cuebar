@@ -159,7 +159,7 @@ public enum Ranking {
         } else if title.hasPrefix(query) {
             base = prefixScore
         } else if tokensMatchInOrder(
-            titleTokens: title.split(separator: " ").map(String.init),
+            titleTokens: title.split(separator: " "),
             queryTokens: queryTokens
         ) {
             base = tokenInOrderScore
@@ -199,7 +199,10 @@ public enum Ranking {
     }
 
     /// True when every query token prefixes a later title token, in order.
-    private static func tokensMatchInOrder(titleTokens: [String], queryTokens: [String]) -> Bool {
+    ///
+    /// Takes `Substring`s so ranking doesn't heap-allocate a `String` for every
+    /// word of every candidate — that dominated the cost over a large library.
+    private static func tokensMatchInOrder(titleTokens: [Substring], queryTokens: [String]) -> Bool {
         guard !queryTokens.isEmpty, !titleTokens.isEmpty else { return false }
         var titleIndex = 0
         for queryToken in queryTokens {
