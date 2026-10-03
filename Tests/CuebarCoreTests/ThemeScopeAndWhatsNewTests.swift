@@ -143,7 +143,7 @@ final class WhatsNewTests: XCTestCase {
     }
 
     func testLatestNoteIsTheVersionBeingReleased() {
-        XCTAssertEqual(WhatsNew.notes.first?.version, "0.6.0")
+        XCTAssertEqual(WhatsNew.notes.first?.version, "0.7.1")
     }
 
     func testUnknownVersionHasNoHighlights() {

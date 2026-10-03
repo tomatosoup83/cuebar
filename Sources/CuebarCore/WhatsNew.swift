@@ -30,6 +30,30 @@ public enum WhatsNew {
 
     public static let notes: [Note] = [
         Note(
+            version: "0.7.1",
+            entries: [
+                WhatsNewEntry(
+                    symbolName: "paintpalette",
+                    title: "A New Default Look",
+                    detail: "Album Art is now the default, following the row you "
+                        + "highlight. Your theme was switched once — undo with "
+                        + "“theme ”."
+                ),
+                WhatsNewEntry(
+                    symbolName: "clock.arrow.circlepath",
+                    title: "Home Screen",
+                    detail: "The now-playing track and a Recently Played shelf meet "
+                        + "you when Cuebar opens."
+                ),
+                WhatsNewEntry(
+                    symbolName: "command",
+                    title: "Quick Actions",
+                    detail: "Press ⌘K on any row to play, Like, add to a playlist, or "
+                        + "open it in Music."
+                )
+            ]
+        ),
+        Note(
             version: "0.6.0",
             entries: [
                 WhatsNewEntry(
