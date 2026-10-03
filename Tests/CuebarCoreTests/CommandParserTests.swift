@@ -32,6 +32,26 @@ final class CommandParserTests: XCTestCase {
         XCTAssertEqual(CommandParser.parse("back"), .previous)
     }
 
+    /// A transport verb only stands alone — "back to you" is a song, not the
+    /// previous-track command. Regression: song search used to be suppressed.
+    func testTransportVerbWithTrailingWordsBecomesASong() {
+        XCTAssertEqual(CommandParser.parse("back to you"), .play(query: "back to you"))
+        XCTAssertEqual(CommandParser.parse("Back to Me"), .play(query: "Back to Me"))
+        XCTAssertEqual(CommandParser.parse("next to me"), .play(query: "next to me"))
+        XCTAssertEqual(CommandParser.parse("skip to my lou"), .play(query: "skip to my lou"))
+        XCTAssertEqual(CommandParser.parse("previous track"), .play(query: "previous track"))
+        XCTAssertEqual(CommandParser.parse("pause the music"), .play(query: "pause the music"))
+        XCTAssertEqual(
+            CommandParser.searchTerm(for: CommandParser.parse("back to you")),
+            "back to you"
+        )
+    }
+
+    func testUnknownShuffleArgumentBecomesASong() {
+        XCTAssertEqual(CommandParser.parse("shuffle my songs"), .play(query: "shuffle my songs"))
+        XCTAssertEqual(CommandParser.parse("shuffle off"), .shuffle(.off))
+    }
+
     func testShuffleVariants() {
         XCTAssertEqual(CommandParser.parse("shuffle"), .shuffle(.toggle))
         XCTAssertEqual(CommandParser.parse("shuffle on"), .shuffle(.on))

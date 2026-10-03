@@ -36,6 +36,9 @@ public enum Command: Equatable, Sendable {
 /// Recognized verbs are `play`, `pause`, `resume`, `next`, `previous`,
 /// `shuffle` and `repeat`. Anything else is treated as a bare song name, i.e.
 /// an implicit `play`.
+///
+/// A verb only stands alone: once it is followed by other words it is a song
+/// search, so "back to you" plays the song, not the previous-track command.
 public enum CommandParser {
     public static func parse(_ input: String) -> Command? {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -52,26 +55,26 @@ public enum CommandParser {
             // Bare "play" behaves like "resume"; "play <song>" searches.
             return rest.isEmpty ? .resume : .play(query: rest)
         case "pause":
-            return .pause
+            return rest.isEmpty ? .pause : .play(query: trimmed)
         case "resume":
-            return .resume
+            return rest.isEmpty ? .resume : .play(query: trimmed)
         case "next", "skip", "forward":
-            return .next
+            return rest.isEmpty ? .next : .play(query: trimmed)
         case "previous", "prev", "back":
-            return .previous
+            return rest.isEmpty ? .previous : .play(query: trimmed)
         case "shuffle":
             switch rest.lowercased() {
             case "", "toggle": return .shuffle(.toggle)
             case "on", "yes", "true": return .shuffle(.on)
             case "off", "no", "false": return .shuffle(.off)
-            default: return .shuffle(.toggle)
+            default: return .play(query: trimmed)
             }
         case "repeat":
             switch rest.lowercased() {
             case "queue", "all", "playlist": return .setRepeat(.all)
             case "track", "song", "one": return .setRepeat(.one)
             case "off", "none": return .setRepeat(.off)
-            default: return nil
+            default: return rest.isEmpty ? nil : .play(query: trimmed)
             }
         default:
             return .play(query: trimmed)
