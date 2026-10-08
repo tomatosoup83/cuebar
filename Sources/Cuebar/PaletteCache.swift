@@ -5,7 +5,10 @@ import CuebarCore
 ///
 /// Mirrors `ArtworkStore`: a synchronous cache lookup for painting on the first
 /// frame, plus an async fetch that de-duplicates concurrent requests. Extraction
-/// itself is cheap (a 24×24 grid) and runs once per album.
+/// itself is cheap (a 24×24 grid) and runs once per album per algorithm.
+///
+/// The algorithm is part of the key so the two Album Art themes can be compared
+/// without clobbering each other's cached palette.
 final class PaletteCache: @unchecked Sendable {
     static let shared = PaletteCache()
 
@@ -25,35 +28,47 @@ final class PaletteCache: @unchecked Sendable {
     }
 
     /// Synchronous cache lookup; never triggers a fetch.
-    func cached(for source: ArtworkSource) -> AlbumPalette? {
-        memory.object(forKey: source.cacheKey as NSString)?.palette
+    func cached(for source: ArtworkSource, style: PaletteStyle) -> AlbumPalette? {
+        memory.object(forKey: key(source, style) as NSString)?.palette
     }
 
     /// Returns the cached palette, or fetches the art and extracts one.
-    func palette(for source: ArtworkSource) async -> AlbumPalette? {
-        if let cached = cached(for: source) { return cached }
-        let key = source.cacheKey
+    func palette(
+        for source: ArtworkSource,
+        style: PaletteStyle
+    ) async -> AlbumPalette? {
+        let cacheKey = key(source, style)
+        if let cached = memory.object(forKey: cacheKey as NSString)?.palette { return cached }
 
-        let task = inFlightTask(for: key) { [store] in
+        let task = inFlightTask(for: cacheKey) { [store] in
             Task<AlbumPalette?, Never> {
                 guard let image = await store.image(for: source),
                       let cgImage = image.cgImageRepresentation,
                       let grid = PaletteExtractor.grid(from: cgImage) else {
                     return nil
                 }
-                return PaletteExtractor.palette(from: grid)
+                return PaletteExtractor.palette(
+                    from: grid,
+                    algorithm: style.algorithm,
+                    layout: style.clusterLayout
+                )
             }
         }
 
         let palette = await task.value
-        clearInFlight(for: key)
+        clearInFlight(for: cacheKey)
         if let palette {
-            memory.setObject(Box(palette), forKey: key as NSString)
+            memory.setObject(Box(palette), forKey: cacheKey as NSString)
         }
         return palette
     }
 
     // MARK: - Internals
+
+    /// The cache identity: artwork identity plus the full extraction style.
+    private func key(_ source: ArtworkSource, _ style: PaletteStyle) -> String {
+        "\(style.key)|\(source.cacheKey)"
+    }
 
     /// Returns the in-flight task for `key`, creating one via `make` if needed.
     private func inFlightTask(

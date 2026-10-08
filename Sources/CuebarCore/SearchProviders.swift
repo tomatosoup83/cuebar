@@ -18,6 +18,7 @@ public final class LibrarySearchProvider: MusicSearchProviding, @unchecked Senda
     private var tracks: [MusicCandidate] = []
     private var playlists: [MusicCandidate] = []
     private var albumIndex = LibraryAlbumIndex(tracks: [])
+    private var artistIndex = LibraryArtistIndex(tracks: [])
 
     public init() {}
 
@@ -35,6 +36,7 @@ public final class LibrarySearchProvider: MusicSearchProviding, @unchecked Senda
         self.tracks = tracks
         self.playlists = playlists
         self.albumIndex = LibraryAlbumIndex(tracks: tracks)
+        self.artistIndex = LibraryArtistIndex(tracks: tracks)
     }
 
     /// Songs only — catalog→library resolution must never see album/playlist rows.
@@ -46,6 +48,22 @@ public final class LibrarySearchProvider: MusicSearchProviding, @unchecked Senda
     public func albums() -> [MusicCandidate] {
         lock.lock(); defer { lock.unlock() }
         return albumIndex.albums
+    }
+
+    /// Every derived artist row, alphabetically (the ranker re-sorts).
+    public func artists() -> [MusicCandidate] {
+        lock.lock(); defer { lock.unlock() }
+        return artistIndex.artists
+    }
+
+    /// Searches **only** artists, for the `artist ` scope's hard filter. The
+    /// whole artist pool is ranked, so a broad query can't be crowded out by
+    /// thousands of song matches before the filter is applied.
+    public func searchArtists(_ query: String, limit: Int) -> [MusicCandidate] {
+        let pool = artists()
+        let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !term.isEmpty else { return Array(pool.prefix(limit)) }
+        return Ranking.rank(pool, query: term, preference: .artists, limit: limit)
     }
 
     /// Number of indexed playlists.
@@ -66,8 +84,30 @@ public final class LibrarySearchProvider: MusicSearchProviding, @unchecked Senda
         return albumIndex.tracks(forAlbumID: id)
     }
 
+    /// Every track by a library artist, or nil when unknown.
+    public func tracks(forArtistID id: String) -> [MusicCandidate]? {
+        lock.lock(); defer { lock.unlock() }
+        return artistIndex.tracks(forArtistID: id)
+    }
+
     public func search(_ query: String, limit: Int) async throws -> [MusicCandidate] {
         Ranking.rank(searchPool(), query: query, limit: limit)
+    }
+
+    /// Searches the whole pool for a parsed query, honouring its scope.
+    ///
+    /// Ranks the full pool once with the query's own preference, which is what
+    /// `SearchService` reaches by ranking its (already truncated) library pass a
+    /// second time. Callers that need a single best row — the headless
+    /// `cuebar://` path — use this so an `album `-scoped query can't lose its
+    /// albums to the song-first pre-ranking.
+    public func search(_ query: SearchQuery, limit: Int) -> [MusicCandidate] {
+        let term = query.term.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !term.isEmpty else { return [] }
+        if query.scope?.selectsOnlyItsKind == true {
+            return searchArtists(term, limit: limit)
+        }
+        return Ranking.rank(searchPool(), query: term, preference: query.preference, limit: limit)
     }
 
     public func browse(_ preference: RankPreference, limit: Int) async -> [MusicCandidate] {
@@ -75,20 +115,26 @@ public final class LibrarySearchProvider: MusicSearchProviding, @unchecked Senda
         return LibraryBrowse.items(
             albums: pool.albums,
             playlists: pool.playlists,
+            artists: pool.artists,
             preference: preference,
             limit: limit
         )
     }
 
-    /// Songs + derived album rows + playlists, copied under the lock.
+    /// Songs + derived album rows + derived artist rows + playlists, copied
+    /// under the lock.
     private func searchPool() -> [MusicCandidate] {
         lock.lock(); defer { lock.unlock() }
-        return tracks + albumIndex.albums + playlists
+        return tracks + albumIndex.albums + artistIndex.artists + playlists
     }
 
-    private func browsePool() -> (albums: [MusicCandidate], playlists: [MusicCandidate]) {
+    private func browsePool() -> (
+        albums: [MusicCandidate],
+        playlists: [MusicCandidate],
+        artists: [MusicCandidate]
+    ) {
         lock.lock(); defer { lock.unlock() }
-        return (albumIndex.albums, playlists)
+        return (albumIndex.albums, playlists, artistIndex.artists)
     }
 }
 
@@ -118,7 +164,7 @@ public final class ITunesCatalogProvider: MusicSearchProviding, @unchecked Senda
 
         var request = URLRequest(url: url)
         request.timeoutInterval = 8
-        request.setValue("Cuebar/0.7 (macOS)", forHTTPHeaderField: "User-Agent")
+        request.setValue("Cuebar/0.8 (macOS)", forHTTPHeaderField: "User-Agent")
 
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {

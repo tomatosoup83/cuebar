@@ -4,6 +4,7 @@ import Foundation
 public struct ThemeStore {
     private static let themeKey = "themeID"
     private static let followSelectionKey = "ambientFollowsSelection"
+    private static let globalClusteredColoursKey = "globalClusteredColours"
     /// Marks the one-time switch to Album Art + follow-the-selection as the
     /// default, so it is applied for upgraders but never again after that.
     private static let albumArtDefaultKey = "appliedAlbumArtDefault"
@@ -40,6 +41,14 @@ public struct ThemeStore {
             return defaults.bool(forKey: Self.followSelectionKey)
         }
         nonmutating set { defaults.set(newValue, forKey: Self.followSelectionKey) }
+    }
+
+    /// Whether Album Art v2 mixes every cluster into one global colour instead of
+    /// a vertical gradient. Defaults to off, so v2 keeps its gradient until the
+    /// user opts into the pywal-style flat wash.
+    public var globalClusteredColours: Bool {
+        get { defaults.bool(forKey: Self.globalClusteredColoursKey) }
+        nonmutating set { defaults.set(newValue, forKey: Self.globalClusteredColoursKey) }
     }
 
     /// Moves an existing install onto the new default once.

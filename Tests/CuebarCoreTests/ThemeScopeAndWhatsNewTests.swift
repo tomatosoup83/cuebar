@@ -64,11 +64,12 @@ final class ThemeScopeQueryTests: XCTestCase {
 final class ThemeScopeMenuTests: XCTestCase {
     func testShowsBothThemesAndTheOption() {
         let entries = ThemeScopeMenu.entries(currentTheme: .tahoe, followsSelection: false)
-        XCTAssertEqual(entries.count, 3)
-        XCTAssertEqual(entries.map(\.badge), ["Theme", "Theme", "Option"])
+        XCTAssertEqual(entries.count, 4)
+        XCTAssertEqual(entries.map(\.badge), ["Theme", "Theme", "Theme", "Option"])
         XCTAssertEqual(entries.map(\.title), [
             "Theme: Tahoe",
             "Theme: Album Art",
+            "Theme: Album Art v2",
             "Follow the Highlighted Row"
         ])
     }
@@ -90,11 +91,41 @@ final class ThemeScopeMenuTests: XCTestCase {
         XCTAssertEqual(on?.action, .setFollowsSelection(false))
     }
 
+    func testGlobalColoursOptionOnlyAppearsForAlbumArtV2() {
+        // Not offered for the other themes.
+        XCTAssertNil(
+            ThemeScopeMenu.entries(currentTheme: .albumArt, followsSelection: false)
+                .first { $0.id == "theme.globalColours" }
+        )
+
+        let off = ThemeScopeMenu.entries(
+            currentTheme: .albumArtV2,
+            followsSelection: false,
+            globalColours: false
+        )
+        XCTAssertEqual(off.count, 5, "3 themes + follow + global")
+        let globalOff = off.first { $0.id == "theme.globalColours" }
+        XCTAssertEqual(globalOff?.action, .setGlobalColours(true))
+        XCTAssertEqual(globalOff?.badge, "Option")
+
+        let on = ThemeScopeMenu.entries(
+            currentTheme: .albumArtV2,
+            followsSelection: false,
+            globalColours: true
+        ).first { $0.id == "theme.globalColours" }
+        XCTAssertEqual(on?.action, .setGlobalColours(false))
+    }
+
     func testFilterNarrowsTheOptions() {
         let art = ThemeScopeMenu.entries(
             currentTheme: .tahoe, followsSelection: false, filter: "art"
         )
-        XCTAssertEqual(art.map(\.title), ["Theme: Album Art"])
+        XCTAssertEqual(art.map(\.title), ["Theme: Album Art", "Theme: Album Art v2"])
+
+        let v2 = ThemeScopeMenu.entries(
+            currentTheme: .tahoe, followsSelection: false, filter: "v2"
+        )
+        XCTAssertEqual(v2.map(\.title), ["Theme: Album Art v2"])
 
         let follow = ThemeScopeMenu.entries(
             currentTheme: .tahoe, followsSelection: false, filter: "follow"
@@ -121,8 +152,22 @@ final class SettingsRowTests: XCTestCase {
         ])
     }
 
+    func testAlbumArtV2ShowsTheFollowAndGlobalOptions() {
+        XCTAssertEqual(SettingsRow.visibleRows(theme: .albumArtV2), [
+            .hotKey, .theme, .followSelection, .globalColours, .update, .whatsNew, .onboarding
+        ])
+    }
+
+    /// The global-colours option only means something for Album Art v2.
+    func testAlbumArtHidesTheGlobalOption() {
+        XCTAssertFalse(SettingsRow.visibleRows(theme: .albumArt).contains(.globalColours))
+    }
+
     func testEveryRowIsReachable() {
-        let rows = SettingsRow.visibleRows(theme: .albumArt)
+        let rows = Set(
+            SettingsRow.visibleRows(theme: .albumArt)
+                + SettingsRow.visibleRows(theme: .albumArtV2)
+        )
         for row in SettingsRow.allCases {
             XCTAssertTrue(rows.contains(row), "\(row) is never shown")
         }
@@ -143,7 +188,7 @@ final class WhatsNewTests: XCTestCase {
     }
 
     func testLatestNoteIsTheVersionBeingReleased() {
-        XCTAssertEqual(WhatsNew.notes.first?.version, "0.7.1")
+        XCTAssertEqual(WhatsNew.notes.first?.version, "0.8.0")
     }
 
     func testUnknownVersionHasNoHighlights() {

@@ -24,6 +24,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var playerObserver: NSObjectProtocol?
     private var searchService: SearchService?
 
+    /// Runs `cuebar://` commands without the palette.
+    private lazy var headlessRunner = HeadlessCommandRunner(
+        library: libraryProvider,
+        musicController: musicController,
+        rebuild: { [weak self] in
+            guard let self else { return nil }
+            return await self.refreshLibraryIndex()
+        }
+    )
+    /// True once `libraryProvider` holds the cached index, or the first re-index
+    /// has finished (successfully or not) — a waiting command must never hang.
+    private var isLibraryReady = false
+    /// The last library-index failure, so a headless search that finds nothing
+    /// can report the real reason instead of "no match".
+    private var lastIndexError: Error?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
 #if DEBUG
         // For verifying the theming against a dark appearance.
@@ -49,7 +65,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             libraryProvider: libraryProvider,
             hotKey: preference,
             theme: themeStore.theme,
-            ambientFollowsSelection: themeStore.ambientFollowsSelection
+            ambientFollowsSelection: themeStore.ambientFollowsSelection,
+            usesGlobalColours: themeStore.globalClusteredColours
         )
         controller.onHotKeyChange = { [weak self] newPreference in
             self?.applyHotKey(newPreference) ?? false
@@ -79,6 +96,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         controller.onAmbientFollowsSelectionChange = { [weak self] follows in
             self?.themeStore.ambientFollowsSelection = follows
+        }
+        controller.onGlobalColoursChange = { [weak self] global in
+            self?.themeStore.globalClusteredColours = global
         }
         updateController.onToast = { [weak self] toast in
             self?.paletteController?.presentToast(toast)
@@ -149,7 +169,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let self else { return }
                 self.paletteController?.show()
                 if let query = environment["CUEBAR_PREVIEW_QUERY"] {
-                    self.paletteController?.debugSetQuery(query)
+                    if environment["CUEBAR_TYPE_QUERY"] == "1" {
+                        // Faithful keystrokes, spread across runloop turns, so
+                        // the view's `onChange` fires between them — the timing
+                        // scope-promotion bugs depend on.
+                        self.paletteController?.debugType(query)
+                    } else {
+                        self.paletteController?.debugSetQuery(query)
+                    }
                 }
                 if let settings = environment["CUEBAR_OPEN_SETTINGS"] {
                     if settings == "onboarding" {
@@ -158,13 +185,63 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         self.paletteController?.debugOpenSettings(recording: settings == "recording")
                     }
                 }
+                if let artist = environment["CUEBAR_OPEN_ARTIST"] {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+                        // `CUEBAR_PREVIEW_QUERY` doubles as the page's filter.
+                        self?.paletteController?.debugOpenArtist(
+                            named: artist,
+                            filter: environment["CUEBAR_PREVIEW_QUERY"]
+                        )
+                    }
+                }
+                if let raw = environment["CUEBAR_ARTIST_BACK"] {
+                    let delay = Double(raw) ?? 1.0
+                    DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                        self?.paletteController?.debugExitArtist()
+                    }
+                }
+                if let album = environment["CUEBAR_OPEN_ALBUM"] {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+                        self?.paletteController?.debugOpenAlbum(
+                            named: album,
+                            filter: environment["CUEBAR_PREVIEW_QUERY"]
+                        )
+                    }
+                }
+                if let raw = environment["CUEBAR_SELECT_ALBUM"] {
+                    let delay = Double(raw) ?? 0.8
+                    DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                        self?.paletteController?.debugSelectNearestAlbumRow()
+                    }
+                }
+                // The value is the delay in seconds, so these can be sequenced
+                // around `CUEBAR_CYCLE_TEST` (which needs ~2.3 s to start).
+                if let raw = environment["CUEBAR_EXTENDED"] {
+                    let delay = Double(raw) ?? 1.0
+                    DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                        self?.paletteController?.debugExtendedSelection()
+                    }
+                }
+                if let raw = environment["CUEBAR_ALBUM_BACK"] {
+                    let delay = Double(raw) ?? 1.6
+                    DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                        self?.paletteController?.debugExitAlbum()
+                    }
+                }
                 if environment["CUEBAR_FORCE_PLAYING"] == "1" {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                         self?.paletteController?.debugForcePlaying()
                     }
                 }
                 if let theme = environment["CUEBAR_THEME"] {
-                    self.paletteController?.debugSetTheme(theme == "albumart" ? .albumArt : .tahoe)
+                    let selected: ThemeID
+                    switch theme.lowercased() {
+                    case "tahoe": selected = .tahoe
+                    case "v2", "albumartv2", "albumart-v2", "album-art-v2":
+                        selected = .albumArtV2
+                    default: selected = .albumArt
+                    }
+                    self.paletteController?.debugSetTheme(selected)
                 }
                 if let count = environment["CUEBAR_DUMP_PALETTES"], let value = Int(count) {
                     self.paletteController?.debugDumpPalettes(count: value)
@@ -183,6 +260,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
                 if let raw = environment["CUEBAR_FOLLOW_SELECTION"] {
                     self.paletteController?.debugSetFollowsSelection(raw == "1")
+                }
+                if let raw = environment["CUEBAR_GLOBAL_COLOURS"] {
+                    self.paletteController?.debugSetGlobalColours(raw == "1")
                 }
                 if let raw = environment["CUEBAR_CYCLE_TEST"], let stepMs = Int(raw) {
                     self.paletteController?.debugCycleTest(steps: 10, stepMilliseconds: stepMs)
@@ -261,8 +341,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let cached = indexStore.loadCached() {
             libraryProvider.setIndex(cached.tracks, playlists: cached.playlists)
             NSLog("Cuebar: loaded \(cached.tracks.count) cached tracks, \(cached.playlists.count) playlists.")
+            // Cached rows already answer a search, so release any `cuebar://`
+            // command that arrives during the re-index below.
+            isLibraryReady = true
         }
-        Task { await refreshLibraryIndex() }
+        Task {
+            await refreshLibraryIndex()
+            // Release waiting commands even when this failed: they report the
+            // failure rather than hanging until they time out.
+            isLibraryReady = true
+        }
     }
 
     @discardableResult
@@ -275,12 +363,76 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let playlists = (try? await libraryFetcher.fetchPlaylists()) ?? []
             libraryProvider.setIndex(tracks, playlists: playlists)
             indexStore.save(LibraryIndex(tracks: tracks, playlists: playlists))
+            lastIndexError = nil
             NSLog("Cuebar: indexed \(tracks.count) library tracks, \(playlists.count) playlists.")
             return LibraryIndexSummary(trackCount: tracks.count, playlistCount: playlists.count)
         } catch {
+            lastIndexError = error
             NSLog("Cuebar: library indexing failed: \(error.localizedDescription)")
             return nil
         }
+    }
+
+    // MARK: - URL commands
+
+    /// Runs commands sent through the `cuebar://` URL scheme, so a launcher such
+    /// as Raycast can drive Cuebar without the palette (see `CuebarURL`).
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls {
+            guard let request = CuebarURL.parse(url) else {
+                NSLog("Cuebar: ignoring URL with nothing to run: \(url.absoluteString)")
+                continue
+            }
+            Task { await perform(request) }
+        }
+    }
+
+    /// Resolves and runs one URL command, then reports the result exactly as the
+    /// palette would.
+    private func perform(_ request: CuebarRequest) async {
+        do {
+            let action = try request.action()
+
+            if action.needsIndexedLibrary {
+                guard await waitForLibrary() else {
+                    throw HeadlessCommandError.libraryNotReady
+                }
+                // An empty library plus a failed index is a permission problem,
+                // not a missing song — say so.
+                if libraryProvider.count == 0, let lastIndexError {
+                    throw lastIndexError
+                }
+            }
+            if case .rebuildLibraryIndex = action {
+                paletteController?.presentToast(PlaybackFeedback.rebuildingIndex())
+            }
+
+            let outcome = try await headlessRunner.run(action)
+            NSLog("Cuebar: ran URL command \(request) → \(outcome)")
+            paletteController?.presentToast(PlaybackFeedback.toast(for: outcome))
+        } catch let error as HeadlessCommandError {
+            NSLog("Cuebar: URL command \(request) refused: \(error)")
+            paletteController?.presentToast(error.toast)
+        } catch {
+            NSLog("Cuebar: URL command \(request) failed: \(error.localizedDescription)")
+            paletteController?.presentToast(PlaybackFeedback.failure(error))
+        }
+    }
+
+    /// Waits for the library index to become usable.
+    ///
+    /// A URL can arrive before the cache is read (cold launch) or while the
+    /// first re-index is still running, so index-dependent commands wait rather
+    /// than reporting "no match" against an empty library.
+    private func waitForLibrary(timeout: Duration = .seconds(8)) async -> Bool {
+        guard !isLibraryReady else { return true }
+
+        let deadline = ContinuousClock.now + timeout
+        while ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(100))
+            if isLibraryReady { return true }
+        }
+        return isLibraryReady
     }
 
     // MARK: - Status item

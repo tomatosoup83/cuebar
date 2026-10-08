@@ -80,6 +80,13 @@ final class ThemeStoreTests: XCTestCase {
         XCTAssertFalse(store.ambientFollowsSelection)
     }
 
+    func testGlobalColoursDefaultsOffAndRoundTrips() {
+        let store = ThemeStore(defaults: makeDefaults())
+        XCTAssertFalse(store.globalClusteredColours)
+        store.globalClusteredColours = true
+        XCTAssertTrue(store.globalClusteredColours)
+    }
+
     func testMigrationMovesATahoeUserToTheNewDefault() {
         let defaults = makeDefaults()
         defaults.set("tahoe", forKey: "themeID")
@@ -142,6 +149,24 @@ final class ThemeIDTests: XCTestCase {
             CommandCatalog.score($0, normalizedInput: "theme") != nil
         }
         XCTAssertEqual(matches.count, ThemeID.allCases.count)
+    }
+
+    func testAlbumArtVariantsMapToTheirAlgorithm() {
+        XCTAssertNil(ThemeID.tahoe.paletteAlgorithm)
+        XCTAssertEqual(ThemeID.albumArt.paletteAlgorithm, .classic)
+        XCTAssertEqual(ThemeID.albumArtV2.paletteAlgorithm, .clustered)
+
+        XCTAssertFalse(ThemeID.tahoe.isAlbumArt)
+        XCTAssertTrue(ThemeID.albumArt.isAlbumArt)
+        XCTAssertTrue(ThemeID.albumArtV2.isAlbumArt)
+    }
+
+    func testPaletteStyleAppliesGlobalOnlyToTheClusteredTheme() {
+        XCTAssertNil(ThemeID.tahoe.paletteStyle(globalClusteredColours: true))
+        // The preference is ignored by the classic path.
+        XCTAssertEqual(ThemeID.albumArt.paletteStyle(globalClusteredColours: true), .classic)
+        XCTAssertEqual(ThemeID.albumArtV2.paletteStyle(globalClusteredColours: false), .clustered)
+        XCTAssertEqual(ThemeID.albumArtV2.paletteStyle(globalClusteredColours: true), .clusteredGlobal)
     }
 }
 
@@ -330,6 +355,173 @@ final class PaletteExtractorTests: XCTestCase {
 
     func testEmptyGridReturnsNil() {
         XCTAssertNil(PaletteExtractor.palette(from: PixelGrid(width: 0, height: 0, rgb: [])))
+    }
+}
+
+final class PaletteClusterExtractorTests: XCTestCase {
+    /// A square grid where each row is one solid colour.
+    private func bands(_ colors: [(red: Double, green: Double, blue: Double)]) -> PixelGrid {
+        let side = max(1, colors.count)
+        var rgb: [UInt8] = []
+        for colour in colors {
+            let value = [
+                UInt8(colour.red * 255),
+                UInt8(colour.green * 255),
+                UInt8(colour.blue * 255)
+            ]
+            for _ in 0 ..< side { rgb.append(contentsOf: value) }
+        }
+        return PixelGrid(width: side, height: side, rgb: rgb)
+    }
+
+    private func solid(_ red: Double, _ green: Double, _ blue: Double, side: Int = 9) -> PixelGrid {
+        let value = [UInt8(red * 255), UInt8(green * 255), UInt8(blue * 255)]
+        var rgb: [UInt8] = []
+        for _ in 0 ..< (side * side) { rgb.append(contentsOf: value) }
+        return PixelGrid(width: side, height: side, rgb: rgb)
+    }
+
+    func testClustersSeparateDistinctHues() {
+        let clusters = PaletteExtractor.clusters(
+            in: bands([(0.9, 0.1, 0.1), (0.1, 0.8, 0.2), (0.1, 0.2, 0.9)]),
+            budget: 3
+        )
+        XCTAssertEqual(clusters.count, 3)
+        XCTAssertEqual(clusters.map(\.population).reduce(0, +), 9, "every pixel is clustered")
+
+        // Each cluster should be dominated by a different channel.
+        let dominant = clusters.map { cluster -> Int in
+            let colour = cluster.color
+            if colour.red >= colour.green && colour.red >= colour.blue { return 0 }
+            if colour.green >= colour.blue { return 1 }
+            return 2
+        }.sorted()
+        XCTAssertEqual(dominant, [0, 1, 2])
+    }
+
+    func testClusterBudgetIsRespected() {
+        let side = 8
+        var rgb: [UInt8] = []
+        for row in 0 ..< side {
+            for column in 0 ..< side {
+                rgb.append(UInt8(row * 255 / (side - 1)))
+                rgb.append(UInt8(column * 255 / (side - 1)))
+                rgb.append(0)
+            }
+        }
+        let clusters = PaletteExtractor.clusters(
+            in: PixelGrid(width: side, height: side, rgb: rgb),
+            budget: 4
+        )
+        XCTAssertEqual(clusters.count, 4)
+        XCTAssertEqual(clusters.map(\.population).reduce(0, +), side * side)
+    }
+
+    func testSolidArtworkYieldsOneCluster() {
+        let clusters = PaletteExtractor.clusters(in: solid(0.4, 0.5, 0.6), budget: 8)
+        XCTAssertEqual(clusters.count, 1)
+        XCTAssertEqual(clusters[0].population, 81, "9×9")
+    }
+
+    func testClusteredPaletteKeepsTheLegibilityInvariants() {
+        guard let palette = PaletteExtractor.palette(
+            from: solid(0.9, 0.35, 0.5),
+            algorithm: .clustered
+        ) else { return XCTFail("expected a palette") }
+
+        let tuning = PaletteExtractor.Tuning.default
+        XCTAssertTrue(palette.isUsable)
+        for stop in [palette.top, palette.bottom] {
+            XCTAssertGreaterThanOrEqual(stop.luma, tuning.minimumLuma - 0.02)
+            XCTAssertGreaterThanOrEqual(stop.chroma, tuning.washChromaMinimum - 0.02)
+            XCTAssertLessThanOrEqual(stop.chroma, tuning.washChromaMaximum + 0.02)
+        }
+        XCTAssertGreaterThanOrEqual(palette.accent.chroma, tuning.accentChromaMinimum - 0.02)
+        XCTAssertGreaterThan(palette.selection.chroma, palette.top.chroma)
+    }
+
+    func testClusteredTwoToneKeepsTopAndBottomDistinct() {
+        let grid = bands([(0.86, 0.16, 0.16), (0.86, 0.16, 0.16), (0.16, 0.24, 0.86)])
+        guard let palette = PaletteExtractor.palette(from: grid, algorithm: .clustered) else {
+            return XCTFail("expected a palette")
+        }
+        XCTAssertGreaterThan(
+            palette.top.red - palette.top.blue,
+            palette.bottom.red - palette.bottom.blue
+        )
+    }
+
+    /// The global layout ignores position, so both stops come out identical even
+    /// for a top/bottom two-tone cover — the pywal-style flat wash.
+    func testGlobalLayoutMakesTopAndBottomIdentical() {
+        let grid = bands([(0.86, 0.16, 0.16), (0.86, 0.16, 0.16), (0.16, 0.24, 0.86)])
+        guard let gradient = PaletteExtractor.palette(
+            from: grid, algorithm: .clustered, layout: .gradient
+        ), let global = PaletteExtractor.palette(
+            from: grid, algorithm: .clustered, layout: .global
+        ) else { return XCTFail("expected palettes") }
+
+        XCTAssertEqual(global.top, global.bottom)
+        XCTAssertNotEqual(
+            gradient.top, gradient.bottom,
+            "the gradient layout must keep the stops distinct"
+        )
+    }
+
+    func testGlobalLayoutStaysLegibleAndUsable() {
+        guard let palette = PaletteExtractor.palette(
+            from: solid(0.9, 0.35, 0.5),
+            algorithm: .clustered,
+            layout: .global
+        ) else { return XCTFail("expected a palette") }
+
+        XCTAssertTrue(palette.isUsable)
+        XCTAssertEqual(palette.top, palette.bottom)
+        XCTAssertGreaterThanOrEqual(
+            palette.top.luma,
+            PaletteExtractor.Tuning.default.minimumLuma - 0.02
+        )
+    }
+
+    /// The layout only means something for the clustered algorithm; the classic
+    /// path must not change.
+    func testClassicIgnoresClusterLayout() {
+        let grid = bands([(0.86, 0.16, 0.16), (0.5, 0.5, 0.5), (0.16, 0.24, 0.86)])
+        XCTAssertEqual(
+            PaletteExtractor.palette(from: grid, algorithm: .classic, layout: .gradient),
+            PaletteExtractor.palette(from: grid, algorithm: .classic, layout: .global)
+        )
+    }
+
+    /// A small vivid patch beats a large grey majority, because the accent scores
+    /// by chroma × population — the same preference the classic path has.
+    func testClusteredAccentPrefersTheVividCluster() {
+        let side = 10
+        var rgb: [UInt8] = []
+        for row in 0 ..< side {
+            for column in 0 ..< side {
+                if row < 2, column < 2 {
+                    rgb.append(contentsOf: [230, 40, 40])
+                } else {
+                    rgb.append(contentsOf: [128, 128, 128])
+                }
+            }
+        }
+        guard let palette = PaletteExtractor.palette(
+            from: PixelGrid(width: side, height: side, rgb: rgb),
+            algorithm: .clustered
+        ) else { return XCTFail("expected a palette") }
+
+        XCTAssertGreaterThan(palette.accent.red, palette.accent.green)
+        XCTAssertGreaterThan(palette.accent.red, palette.accent.blue)
+    }
+
+    func testClusteredIsDeterministic() {
+        let grid = bands([(0.8, 0.2, 0.4), (0.2, 0.7, 0.3), (0.3, 0.3, 0.9)])
+        XCTAssertEqual(
+            PaletteExtractor.palette(from: grid, algorithm: .clustered),
+            PaletteExtractor.palette(from: grid, algorithm: .clustered)
+        )
     }
 }
 

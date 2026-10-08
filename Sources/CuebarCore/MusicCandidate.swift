@@ -43,6 +43,14 @@ public struct MusicCandidate: Identifiable, Sendable, Hashable, Codable {
     /// A representative track whose artwork to show for an album row.
     public let artworkTrackID: String?
 
+    // Album facts (library). Optional so catalog rows and caches written before
+    // these existed still decode — which is why `LibraryIndex.currentVersion`
+    // does not need a bump for them; the launch re-index fills them in.
+    /// Year the album was recorded, taken from its tracks.
+    public let year: Int?
+    /// Genre, taken from the album's tracks.
+    public let genre: String?
+
     public let normalizedTitle: String
     public let normalizedArtist: String
     public let normalizedAlbum: String
@@ -62,7 +70,9 @@ public struct MusicCandidate: Identifiable, Sendable, Hashable, Codable {
         discNumber: Int? = nil,
         trackNumber: Int? = nil,
         trackCount: Int? = nil,
-        artworkTrackID: String? = nil
+        artworkTrackID: String? = nil,
+        year: Int? = nil,
+        genre: String? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -79,6 +89,8 @@ public struct MusicCandidate: Identifiable, Sendable, Hashable, Codable {
         self.trackNumber = trackNumber
         self.trackCount = trackCount
         self.artworkTrackID = artworkTrackID
+        self.year = year
+        self.genre = genre
         self.normalizedTitle = TextNormalizer.normalize(title)
         self.normalizedArtist = TextNormalizer.normalize(artist)
         self.normalizedAlbum = TextNormalizer.normalize(album)
@@ -86,6 +98,13 @@ public struct MusicCandidate: Identifiable, Sendable, Hashable, Codable {
 
     /// Secondary line shown in the palette, e.g. "a-ha · Hunting High and Low".
     public var subtitle: String {
+        // An artist row's title *is* the artist name, so repeating it as the
+        // subtitle would just say "Radiohead · Radiohead · 92 songs".
+        if kind == .artist {
+            guard let trackCount else { return "" }
+            return "\(trackCount) song\(trackCount == 1 ? "" : "s")"
+        }
+
         var parts: [String] = []
         if !artist.isEmpty { parts.append(artist) }
         if !album.isEmpty, album != title { parts.append(album) }

@@ -99,6 +99,7 @@ struct ResultRowView: View {
             switch candidate.kind {
             case .album: return "Album"
             case .playlist: return "Playlist"
+            case .artist: return "Artist"
             default: return "Library"
             }
         }

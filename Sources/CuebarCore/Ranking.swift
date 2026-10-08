@@ -1,10 +1,12 @@
 import Foundation
 
-/// Which kind of result a query asked to prioritise (`… album`, `… playlist`).
+/// Which kind of result a query asked to prioritise (`… album`, `… playlist`,
+/// `… artist`).
 public enum RankPreference: Equatable, Sendable {
     case songs
     case albums
     case playlists
+    case artists
 }
 
 /// Deterministic scoring and ordering for search results.
@@ -35,19 +37,22 @@ public enum Ranking {
     private static let artistBonus: Double = 150
     private static let albumBonus: Double = 30
 
-    /// Orders kinds, putting the preferred kind first. `artist` is always last.
+    /// Orders kinds, putting the preferred kind first. `artist` is always last
+    /// otherwise: an artist row is a destination, not a playable result.
     private static func kindOrder(_ preference: RankPreference) -> [MusicKind] {
         switch preference {
         case .songs: return [.song, .album, .playlist, .artist]
         case .albums: return [.album, .song, .playlist, .artist]
         case .playlists: return [.playlist, .song, .album, .artist]
+        case .artists: return [.artist, .song, .album, .playlist]
         }
     }
 
     /// Bonus/penalty that orders kinds; the preferred kind leads.
     private static func kindBonus(_ kind: MusicKind, preference: RankPreference) -> Double {
+        if kindOrder(preference).first == kind { return 200 }
         if kind == .artist { return -100 }
-        return kindOrder(preference).first == kind ? 200 : 0
+        return 0
     }
 
     public static func kindRank(_ kind: MusicKind, preference: RankPreference = .songs) -> Int {
@@ -110,6 +115,52 @@ public enum Ranking {
         return scored.prefix(limit).map(\.candidate)
     }
 
+    /// Ranks songs drawn from **one fixed collection** — an artist's catalogue,
+    /// or an album's track list — against `query`.
+    ///
+    /// Only the title counts here. Every track already belongs to that artist or
+    /// album, so the usual artist/album fallback would match the collection's own
+    /// name and return all of it for any fragment: typing `the` inside The
+    /// Beatles' page would list every song, and inside an album view the album
+    /// title would match every track.
+    public static func rankWithin(
+        _ tracks: [MusicCandidate],
+        query: String,
+        limit: Int = 40
+    ) -> [MusicCandidate] {
+        let normalizedQuery = TextNormalizer.normalize(query)
+        guard !normalizedQuery.isEmpty else {
+            return Array(tracks.prefix(limit))
+        }
+        let queryTokens = normalizedQuery.split(separator: " ").map(String.init)
+
+        var scored: [(candidate: MusicCandidate, score: Double)] = []
+        scored.reserveCapacity(tracks.count)
+
+        for track in tracks {
+            let total = evaluate(
+                track,
+                normalizedQuery: normalizedQuery,
+                queryTokens: queryTokens,
+                preference: .songs,
+                allowsFieldFallback: false
+            ).total
+            if total > 0 {
+                scored.append((track, total))
+            }
+        }
+
+        scored.sort { lhs, rhs in
+            if lhs.score != rhs.score { return lhs.score > rhs.score }
+            if lhs.candidate.normalizedTitle != rhs.candidate.normalizedTitle {
+                return lhs.candidate.normalizedTitle < rhs.candidate.normalizedTitle
+            }
+            return lhs.candidate.id < rhs.candidate.id
+        }
+
+        return scored.prefix(limit).map(\.candidate)
+    }
+
     /// Scores a single candidate. Returns 0 when there is no meaningful match.
     public static func score(
         _ candidate: MusicCandidate,
@@ -149,7 +200,8 @@ public enum Ranking {
         _ candidate: MusicCandidate,
         normalizedQuery query: String,
         queryTokens: [String],
-        preference: RankPreference = .songs
+        preference: RankPreference = .songs,
+        allowsFieldFallback: Bool = true
     ) -> (base: Double, total: Double) {
         let title = candidate.normalizedTitle
         var base: Double = 0
@@ -174,7 +226,7 @@ public enum Ranking {
         }
 
         // Fall back to artist / album matches so "play a-ha" works too.
-        if base == 0 {
+        if base == 0, allowsFieldFallback {
             if !candidate.normalizedArtist.isEmpty, candidate.normalizedArtist.contains(query) {
                 base = artistMatchScore
             } else if !candidate.normalizedAlbum.isEmpty, candidate.normalizedAlbum.contains(query) {

@@ -12,6 +12,8 @@ public enum QuickAction: Equatable, Sendable {
     case openAddToPlaylist
     /// Add the row's track to a user playlist.
     case addToPlaylist(playlistID: String, name: String)
+    /// Open the extended album view for the row (library albums only).
+    case openAlbum
     /// Reveal the row in Music.app (or open its catalog page).
     case openInMusic
     /// Close the actions menu.
@@ -90,13 +92,34 @@ public enum QuickActions {
             switch candidate.kind {
             case .album:
                 items.append(primary(id: "play", title: "Play Album", symbolName: "play.fill", keywords: ["play", "album"]))
+                // Only library albums have a track list to show; a catalog album
+                // has no tracks until they are fetched.
+                if candidate.source == .library {
+                    items.append(QuickActionItem(
+                        id: "viewAlbum",
+                        title: "View Album",
+                        symbolName: "square.stack",
+                        action: .openAlbum,
+                        keywords: ["view", "open", "album", "tracks", "order", "details"],
+                        shortcut: "⌘↩"
+                    ))
+                }
                 items.append(openInMusicItem)
             case .playlist:
                 items.append(primary(id: "play", title: "Play Playlist", symbolName: "play.fill", keywords: ["play", "playlist"]))
                 items.append(openInMusicItem)
-            case .song, .artist:
+            case .song:
                 items.append(primary(id: "play", title: "Play", symbolName: "play.fill", keywords: ["play"]))
                 appendTrackActions(to: &items, loved: loved, canLike: canLike)
+            case .artist:
+                // An artist row is a destination, not a playable item: there is
+                // no single track to play, love, or add to a playlist.
+                items.append(primary(
+                    id: "open",
+                    title: "Open Artist",
+                    symbolName: "music.mic",
+                    keywords: ["open", "artist", "browse", "page"]
+                ))
             }
         }
 

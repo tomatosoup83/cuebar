@@ -39,7 +39,7 @@ enum ThemeGlass {
         palette: AlbumPalette?,
         followsSelection: Bool
     ) -> Glass {
-        guard theme == .albumArt,
+        guard theme.isAlbumArt,
               !followsSelection,
               tintOpacity > 0,
               let palette else {
@@ -76,7 +76,7 @@ struct ThemeBackground: View {
     static var followWashOpacity: Double = 0.62
 
     var body: some View {
-        if theme == .albumArt, !reduceTransparency, let palette {
+        if theme.isAlbumArt, !reduceTransparency, let palette {
             let drifting = isDrifting && !reduceMotion
             TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !drifting)) { context in
                 let time = clock.time(at: context.date, running: drifting)

@@ -183,9 +183,7 @@ struct NowPlayingCardView: View {
     }
 
     private static func timeString(_ seconds: Double) -> String {
-        guard seconds.isFinite, seconds >= 0 else { return "0:00" }
-        let total = Int(seconds.rounded())
-        return String(format: "%d:%02d", total / 60, total % 60)
+        TimeFormat.mmss(seconds)
     }
 }
 

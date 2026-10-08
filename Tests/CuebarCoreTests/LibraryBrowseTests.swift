@@ -23,6 +23,17 @@ final class LibraryBrowseTests: XCTestCase {
         )
     }
 
+    private func artist(_ id: String) -> MusicCandidate {
+        MusicCandidate(id: id, kind: .artist, source: .library, title: id, artist: id, album: "")
+    }
+
+    private func song(_ id: String) -> MusicCandidate {
+        MusicCandidate(
+            id: id, kind: .song, source: .library,
+            title: id, artist: "Band", album: "Record", persistentID: id
+        )
+    }
+
     func testAlbumsPreferenceReturnsAlbumsOnly() {
         var generator = SeededGenerator(seed: 1)
         let items = LibraryBrowse.items(
@@ -84,5 +95,31 @@ final class LibraryBrowseTests: XCTestCase {
         XCTAssertTrue(
             LibraryBrowse.items(albums: [album("a")], playlists: [], preference: .albums, limit: 0, using: &generator).isEmpty
         )
+    }
+
+    func testArtistsPreferenceReturnsArtistsOnly() {
+        var generator = SeededGenerator(seed: 6)
+        let items = LibraryBrowse.items(
+            albums: [album("a")],
+            playlists: [playlist("p")],
+            artists: [artist("x"), artist("y")],
+            preference: .artists,
+            limit: 40,
+            using: &generator
+        )
+        XCTAssertEqual(Set(items.map(\.id)), ["x", "y"])
+    }
+
+    func testShuffledCapsAndKeepsEveryElement() {
+        var generator = SeededGenerator(seed: 7)
+        let pool = (0..<10).map { song("s\($0)") }
+        let sample = LibraryBrowse.shuffled(pool, limit: 4, using: &generator)
+        XCTAssertEqual(sample.count, 4)
+        XCTAssertTrue(sample.allSatisfy { pool.contains($0) })
+    }
+
+    func testShuffledZeroLimitIsEmpty() {
+        var generator = SeededGenerator(seed: 8)
+        XCTAssertTrue(LibraryBrowse.shuffled([song("s0")], limit: 0, using: &generator).isEmpty)
     }
 }

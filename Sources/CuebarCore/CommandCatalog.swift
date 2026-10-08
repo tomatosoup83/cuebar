@@ -14,6 +14,8 @@ public enum PaletteAction: Equatable, Sendable {
     case setTheme(ThemeID)
     /// Turn the "ambient follows the highlighted row" option on or off.
     case setFollowsSelection(Bool)
+    /// Turn the Album Art v2 "global colours" (no gradient) option on or off.
+    case setGlobalColours(Bool)
 }
 
 /// A user-facing row that is not a song: a command or an app action.

@@ -63,6 +63,9 @@ final class PaletteModel: ObservableObject {
     @Published private(set) var theme: ThemeID
     /// Whether the ambient colour follows the highlighted row.
     @Published private(set) var ambientFollowsSelection: Bool
+    /// Whether Album Art v2 mixes every cluster into one global colour (no
+    /// gradient). Only meaningful for that theme.
+    @Published private(set) var usesGlobalColours: Bool
     /// The ambient wash colour, pushed in by the window controller.
     @Published private(set) var ambientPalette: AlbumPalette?
     /// The selected row's own album palette, when the Album Art theme is on.
@@ -90,6 +93,8 @@ final class PaletteModel: ObservableObject {
     var onThemeChange: ((ThemeID) -> Void)?
     /// Persists the "ambient follows the highlighted row" option.
     var onAmbientFollowsSelectionChange: ((Bool) -> Void)?
+    /// Persists the Album Art v2 "global colours" option.
+    var onGlobalColoursChange: ((Bool) -> Void)?
     /// Opens the Theme dropdown at the Settings row (AppKit owns the menu, so it
     /// gets real arrow-key and Return handling for free).
     var onOpenThemeMenu: (() -> Void)?
@@ -123,6 +128,48 @@ final class PaletteModel: ObservableObject {
     private(set) var lastPollDate: Date?
     /// The scope currently being browsed (nil = not browsing).
     private var browsePreference: RankPreference?
+
+    // Artist page
+    /// The artist whose page is showing, or nil. The page keeps the search
+    /// field: typing there filters *that artist's* songs, never the library.
+    @Published private(set) var artistFocus: MusicCandidate?
+    /// The artist page's whole catalogue, snapshotted when the page opens.
+    private var artistTracks: [MusicCandidate] = []
+    /// True while the page is showing its shuffled sample (empty field) rather
+    /// than matches for what was typed.
+    private var artistIsBrowsing = false
+    /// Everything needed to put the palette back exactly as it was before a
+    /// detail view was opened. One slot serves both views: only one can be open.
+    ///
+    /// The list is **restored**, not recomputed. Recomputing re-shuffles a browse
+    /// list — leaving an album view handed back a different random order — and
+    /// arrives asynchronously, so the scroll restore would clamp against the
+    /// outgoing (much shorter) content before the real one landed.
+    private struct ReturnState {
+        let query: String
+        let scope: SearchScope?
+        let music: [MusicCandidate]
+        let commands: [CommandEntry]
+        let browsePreference: RankPreference?
+        let resultsQuery: SearchQuery?
+        let selectedIndex: Int
+    }
+
+    private var returnState: ReturnState?
+
+    // Extended album view
+    /// The album whose extended view is showing, or nil.
+    @Published private(set) var albumFocus: MusicCandidate?
+    /// The album's tracks in original running order, with display numbers.
+    private var albumTracks = AlbumTrackList(tracks: [])
+    /// The facts line at the top of the view.
+    @Published private(set) var albumFacts: AlbumFacts?
+    /// True while the view shows its full track list (empty field) rather than
+    /// matches for what was typed.
+    private var albumIsShowingAll = false
+
+    /// Rows the palette shows for a search or a browse list.
+    private static let rowLimit = 40
     /// Last-played ages from the most recent fetch.
     private var playedEntries: [PlayedEntry] = []
     /// When `playedEntries` was read, so ages stay correct between fetches.
@@ -169,7 +216,8 @@ final class PaletteModel: ObservableObject {
         libraryProvider: LibrarySearchProvider,
         hotKey: HotKeyPreference = .default,
         theme: ThemeID = .albumArt,
-        ambientFollowsSelection: Bool = true
+        ambientFollowsSelection: Bool = true,
+        usesGlobalColours: Bool = false
     ) {
         self.searchService = searchService
         self.musicController = musicController
@@ -177,6 +225,7 @@ final class PaletteModel: ObservableObject {
         self.hotKey = hotKey
         self.theme = theme
         self.ambientFollowsSelection = ambientFollowsSelection
+        self.usesGlobalColours = usesGlobalColours
         self.executor = CommandExecutor(controller: musicController)
 
         searchService.$results
@@ -226,6 +275,14 @@ final class PaletteModel: ObservableObject {
         query = ""
         scope = nil
         browsePreference = nil
+        artistFocus = nil
+        artistTracks = []
+        artistIsBrowsing = false
+        returnState = nil
+        albumFocus = nil
+        albumTracks = AlbumTrackList(tracks: [])
+        albumFacts = nil
+        albumIsShowingAll = false
         searchService.clear()
         commands = []
         music = []
@@ -257,6 +314,18 @@ final class PaletteModel: ObservableObject {
 
     /// Recompute the command rows and the song search for the current input.
     func queryChanged() {
+        // The artist page owns the field: it filters that one artist's songs and
+        // never promotes a keyword into a scope.
+        if artistFocus != nil {
+            artistQueryChanged()
+            return
+        }
+        // The extended album view owns the field in the same way.
+        if albumFocus != nil {
+            albumQueryChanged()
+            return
+        }
+
         // A leading/trailing keyword followed by whitespace becomes a scope:
         // move it out of the field text so it isn't duplicated by the chip.
         let parsed = SearchQuery.parse(query)
@@ -278,8 +347,40 @@ final class PaletteModel: ObservableObject {
             commands = ThemeScopeMenu.entries(
                 currentTheme: theme,
                 followsSelection: ambientFollowsSelection,
+                globalColours: usesGlobalColours,
                 filter: trimmed
             )
+            rebuildItems()
+            return
+        }
+
+        // `artist ` is a filter, not a ranking: only artist rows, and they come
+        // straight from the library index (there is no catalog artist index, and
+        // ranking the whole pool first would let song matches crowd them out).
+        if scope == .artists {
+            commands = []
+            resultsQuery = nil
+            isSearchPending = false
+            searchService.clear()
+            if trimmed.isEmpty {
+                // `clear()` above emptied `music` through the results sink, so
+                // the sample is rebuilt whenever one isn't already up *or* the
+                // list is empty. The bare "already browsing" guard would leave
+                // the palette blank on the second pass: promoting the keyword
+                // clears the field programmatically, and the view's own
+                // `onChange` for that runs this whole branch again.
+                if browsePreference != .artists || music.isEmpty {
+                    browsePreference = .artists
+                    selectedIndex = 0
+                    music = LibraryBrowse.shuffled(
+                        libraryProvider.artists(),
+                        limit: Self.rowLimit
+                    )
+                }
+            } else {
+                browsePreference = nil
+                music = libraryProvider.searchArtists(trimmed, limit: Self.rowLimit)
+            }
             rebuildItems()
             return
         }
@@ -339,6 +440,247 @@ final class PaletteModel: ObservableObject {
         queryChanged()
     }
 
+    // MARK: - Artist page
+
+    /// How many songs the open artist page has, for the footer.
+    var artistSongCount: Int { artistTracks.count }
+
+    /// Opens the artist page: the artist's songs, shuffled until the user types.
+    ///
+    /// The search the page was opened from is remembered so Esc (or Backspace on
+    /// an empty field) returns to it, like a push/pop.
+    func openArtist(_ artist: MusicCandidate) {
+        guard artist.kind == .artist else { return }
+        guard let tracks = libraryProvider.tracks(forArtistID: artist.id), !tracks.isEmpty else {
+            statusMessage = "“\(artist.title)” has no songs in your library."
+            return
+        }
+
+        returnState = captureReturnState()
+        artistTracks = tracks
+        artistFocus = artist
+        // The artist's own page is not inside the `artist ` scope any more; the
+        // chip stays an `Artist` scope chip and the header names the artist.
+        scope = nil
+        browsePreference = nil
+        statusMessage = nil
+        query = ""
+        // Fill the page *here* rather than routing through `queryChanged()`: the
+        // songs have to be on screen the instant the page opens, not one
+        // round trip later. The view's own `onChange` for the cleared field runs
+        // afterwards and finds the sample already up.
+        artistShowSample()
+    }
+
+    /// Leaves the artist page, restoring the search it was opened from.
+    func exitArtist() {
+        guard artistFocus != nil else { return }
+        artistFocus = nil
+        artistTracks = []
+        artistIsBrowsing = false
+
+        restoreReturnState()
+    }
+
+    // MARK: - Extended album view
+
+    /// How many tracks the open album view has, for the footer.
+    var albumTrackCount: Int { albumTracks.entries.count }
+
+    /// The album view's footer text.
+    var albumFooterText: String {
+        let count = albumTrackCount
+        return "\(count) track\(count == 1 ? "" : "s") \u{00b7} type to filter"
+    }
+
+    /// The number shown beside a track row (`1`, or `1-3` on a multi-disc album).
+    func albumNumber(for track: MusicCandidate) -> String {
+        albumTracks.entries.first { $0.id == track.id }?.number ?? ""
+    }
+
+    /// Development helper: highlight the nearest library album row at or after
+    /// the current selection, so the album view can be opened from a scrolled
+    /// list without jumping back to the top.
+    func debugSelectNearestAlbumRow() {
+        let isAlbum: (PaletteItem) -> Bool = { item in
+            guard case .music(let candidate) = item else { return false }
+            return candidate.kind == .album && candidate.source == .library
+        }
+        if let index = items.indices.dropFirst(selectedIndex).first(where: { isAlbum(items[$0]) }) {
+            select(index)
+        } else if let index = items.indices.prefix(selectedIndex).last(where: { isAlbum(items[$0]) }) {
+            select(index)
+        }
+    }
+
+    /// Whether the highlighted row can open the extended album view.
+    var canOpenAlbumView: Bool {
+        guard case .music(let candidate)? = selectedItem else { return false }
+        return candidate.kind == .album && candidate.source == .library
+    }
+
+    /// Opens the extended album view: the album's tracks in their original
+    /// running order, with the facts line above them.
+    func openAlbumView(_ album: MusicCandidate) {
+        guard album.kind == .album, album.source == .library else { return }
+        guard let tracks = libraryProvider.tracks(forAlbumID: album.id), !tracks.isEmpty else {
+            statusMessage = "“\(album.title)” has no tracks to show."
+            return
+        }
+
+        returnState = captureReturnState()
+        albumTracks = AlbumTrackList(tracks: tracks)
+        albumFacts = AlbumFacts(album: album, tracks: tracks)
+        albumFocus = album
+        scope = nil
+        browsePreference = nil
+        statusMessage = nil
+        query = ""
+        // Fill the list here rather than via `queryChanged()`, so the tracks are
+        // on screen the instant the view opens — the same reason the artist page
+        // populates directly.
+        albumShowAll()
+    }
+
+    /// Leaves the album view, restoring the search it was opened from.
+    func exitAlbumView() {
+        guard albumFocus != nil else { return }
+        albumFocus = nil
+        albumTracks = AlbumTrackList(tracks: [])
+        albumFacts = nil
+        albumIsShowingAll = false
+
+        restoreReturnState()
+    }
+
+    /// ⌘⏎ on the highlighted row: the extended album view for a library album,
+    /// otherwise the ordinary action, so the shortcut is never a dead key.
+    func executeExtendedSelection() {
+        if case .music(let candidate)? = selectedItem,
+           candidate.kind == .album, candidate.source == .library {
+            openAlbumView(candidate)
+            return
+        }
+        executeSelection()
+    }
+
+    /// The album view's list: every track in order while the field is empty,
+    /// otherwise the tracks whose titles match what was typed.
+    private func albumQueryChanged() {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if trimmed.isEmpty {
+            if !albumIsShowingAll || music.isEmpty {
+                albumShowAll()
+            } else {
+                rebuildItems()
+            }
+        } else {
+            albumIsShowingAll = false
+            beginLocalResults()
+            music = Ranking.rankWithin(
+                albumTracks.entries.map(\.track),
+                query: trimmed,
+                limit: Self.rowLimit
+            )
+            rebuildItems()
+        }
+    }
+
+    /// Shows the album's full track list in its original order.
+    private func albumShowAll() {
+        albumIsShowingAll = true
+        selectedIndex = 0
+        beginLocalResults()
+        music = albumTracks.entries.map(\.track)
+        rebuildItems()
+    }
+
+    /// The artist page's list: a shuffled sample while the field is empty,
+    /// otherwise the songs whose titles match what was typed.
+    private func artistQueryChanged() {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if trimmed.isEmpty {
+            // The sample is (re)built whenever it isn't already up. `music.isEmpty`
+            // is the safety net: an empty field must never leave the page blank
+            // while the artist has songs.
+            if !artistIsBrowsing || music.isEmpty {
+                artistShowSample()
+            } else {
+                rebuildItems()
+            }
+        } else {
+            artistIsBrowsing = false
+            beginLocalResults()
+            music = Ranking.rankWithin(artistTracks, query: trimmed, limit: Self.rowLimit)
+            rebuildItems()
+        }
+    }
+
+    /// Shows a fresh shuffled sample of the open artist's songs.
+    private func artistShowSample() {
+        artistIsBrowsing = true
+        selectedIndex = 0
+        beginLocalResults()
+        music = LibraryBrowse.shuffled(artistTracks, limit: Self.rowLimit)
+        rebuildItems()
+    }
+
+    /// Snapshots the list a detail view is about to cover up.
+    private func captureReturnState() -> ReturnState {
+        ReturnState(
+            query: query,
+            scope: scope,
+            music: music,
+            commands: commands,
+            browsePreference: browsePreference,
+            resultsQuery: resultsQuery,
+            selectedIndex: selectedIndex
+        )
+    }
+
+    /// Puts the palette back the way `captureReturnState()` found it.
+    ///
+    /// Restoring `browsePreference` and `resultsQuery` also makes the view's own
+    /// `onChange` for the restored field harmless: `queryChanged()` then sees the
+    /// browse kind or the query it already holds and neither re-shuffles nor
+    /// re-searches over the top of what was just put back. (When the field was
+    /// empty before *and* after — the browse case — assigning it is not even a
+    /// change, so `queryChanged()` never runs at all.)
+    private func restoreReturnState() {
+        guard let state = returnState else {
+            queryChanged()
+            return
+        }
+        returnState = nil
+
+        query = state.query
+        scope = state.scope
+        music = state.music
+        commands = state.commands
+        browsePreference = state.browsePreference
+        resultsQuery = state.resultsQuery
+        isSearchPending = false
+        rebuildItems()
+        if items.indices.contains(state.selectedIndex), selectedIndex != state.selectedIndex {
+            select(state.selectedIndex)
+        }
+    }
+
+    /// Shared setup for rows computed locally, by the artist page or the album
+    /// view.
+    ///
+    /// Neither goes through `SearchService`, so anything it might still publish
+    /// has to be dropped first, or a stale library search would land on top of
+    /// the list.
+    private func beginLocalResults() {
+        commands = []
+        resultsQuery = nil
+        isSearchPending = false
+        searchService.clear()
+    }
+
     // MARK: - Updates
 
     /// The running version, for Settings.
@@ -387,6 +729,22 @@ final class PaletteModel: ObservableObject {
         onAmbientFollowsSelectionChange?(follows)
     }
 
+    /// Turns the Album Art v2 "global colours" (no gradient) option on or off.
+    func setUsesGlobalColours(_ global: Bool) {
+        guard global != usesGlobalColours else { return }
+        usesGlobalColours = global
+        onGlobalColoursChange?(global)
+        // The extraction style changed: rebuild so the option rows move their
+        // checkmark and the selected row's accent re-resolves.
+        queryChanged()
+    }
+
+    /// The extraction recipe for the current theme and options, or nil when the
+    /// theme does not use album art.
+    var paletteStyle: PaletteStyle? {
+        theme.paletteStyle(globalClusteredColours: usesGlobalColours)
+    }
+
     // MARK: - Settings navigation
 
     /// The rows Settings currently shows, in order.
@@ -432,6 +790,8 @@ final class PaletteModel: ObservableObject {
             onOpenThemeMenu?()
         case .followSelection:
             setFollowsSelection(!ambientFollowsSelection)
+        case .globalColours:
+            setUsesGlobalColours(!usesGlobalColours)
         case .update:
             // Install is the primary action when there is something to install.
             if availableUpdate != nil { installUpdate() } else { checkForUpdates() }
@@ -489,21 +849,23 @@ final class PaletteModel: ObservableObject {
         accentTask?.cancel()
         accentTask = nil
 
-        guard theme == .albumArt, let source = selectedItem?.artworkSource else {
+        guard let style = paletteStyle,
+              let source = selectedItem?.artworkSource else {
             rowAccent = nil
             return
         }
 
-        if let cached = PaletteCache.shared.cached(for: source) {
+        if let cached = PaletteCache.shared.cached(for: source, style: style) {
             rowAccent = cached.isUsable ? cached : nil
             return
         }
 
         rowAccent = nil
         accentTask = Task { [weak self] in
-            let palette = await PaletteCache.shared.palette(for: source)
+            let palette = await PaletteCache.shared.palette(for: source, style: style)
             guard !Task.isCancelled, let self else { return }
-            guard self.selectedItem?.artworkSource == source else { return }
+            guard self.selectedItem?.artworkSource == source,
+                  self.paletteStyle == style else { return }
             self.rowAccent = (palette?.isUsable == true) ? palette : nil
         }
     }
@@ -526,7 +888,8 @@ final class PaletteModel: ObservableObject {
         if !normalized.isEmpty {
             let matched = ThemeScopeMenu.entries(
                 currentTheme: theme,
-                followsSelection: ambientFollowsSelection
+                followsSelection: ambientFollowsSelection,
+                globalColours: usesGlobalColours
             ).filter { CommandCatalog.score($0, normalizedInput: normalized) != nil }
             entries.insert(contentsOf: matched, at: 0)
         }
@@ -611,7 +974,7 @@ final class PaletteModel: ObservableObject {
         recent = updated
         // The shelf appearing (or vanishing) changes which commands the home
         // screen shows; only rebuild the commands while the home is on screen.
-        if screen == .search, scope == nil,
+        if screen == .search, scope == nil, artistFocus == nil, albumFocus == nil,
            query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
            hadShelf != !updated.isEmpty {
             queryChanged()
@@ -674,6 +1037,11 @@ final class PaletteModel: ObservableObject {
         case .recent(let track):
             run(.music(.play(query: track.candidate.title)), selected: track.candidate)
         case .music(let candidate):
+            // An artist opens their own page; the other kinds play.
+            if candidate.kind == .artist {
+                openArtist(candidate)
+                return
+            }
             // A library album plays start to finish; a library playlist plays
             // directly; catalog rows still can't be started.
             if candidate.kind == .album, candidate.source == .library {
@@ -854,6 +1222,13 @@ final class PaletteModel: ObservableObject {
             actionsFocusToken = UUID()
         case .addToPlaylist(let playlistID, let name):
             addToPlaylist(playlistID: playlistID, name: name)
+        case .openAlbum:
+            // Read the target before closing, which clears it.
+            let target = actionsTarget
+            closeActionsMenu()
+            if case .music(let candidate)? = target {
+                openAlbumView(candidate)
+            }
         case .openInMusic:
             openInMusic()
         case .dismiss:
@@ -1112,11 +1487,12 @@ final class PaletteModel: ObservableObject {
         guard !isSearchPending else { return }
         let newItems = PaletteListComposer.compose(
             query: query,
-            // Browse mode is albums/playlists only — no now-playing row.
-            nowPlaying: (browsePreference == nil && scope != .themes) ? nowPlaying : nil,
+            // Browse mode is albums/playlists/artists only — no now-playing row.
+            nowPlaying: (browsePreference == nil && scope != .themes && artistFocus == nil
+                && albumFocus == nil) ? nowPlaying : nil,
             commands: commands,
             music: music,
-            recent: scope == nil ? recent : []
+            recent: (scope == nil && artistFocus == nil && albumFocus == nil) ? recent : []
         )
         items = newItems
         if newItems.isEmpty {
@@ -1139,6 +1515,8 @@ final class PaletteModel: ObservableObject {
             setTheme(theme)
         case .setFollowsSelection(let follows):
             setFollowsSelection(follows)
+        case .setGlobalColours(let global):
+            setUsesGlobalColours(global)
         case .music(let command):
             statusMessage = nil
             Task {
@@ -1150,10 +1528,10 @@ final class PaletteModel: ObservableObject {
                 }
                 do {
                     try await self.executor.execute(command, selected: selected)
-                    self.onToast?(self.successToast(
+                    self.onToast?(PlaybackFeedback.toast(
                         for: command,
-                        selected: selected,
-                        shuffleBefore: shuffleBefore
+                        shuffleBefore: shuffleBefore,
+                        selected: selected
                     ))
                     if closeOnSuccess { self.onClose?() }
                 } catch {
@@ -1162,36 +1540,6 @@ final class PaletteModel: ObservableObject {
                     self.onToast?(toast)
                 }
             }
-        }
-    }
-
-    private func successToast(
-        for command: Command,
-        selected: MusicCandidate?,
-        shuffleBefore: Bool?
-    ) -> Toast {
-        switch command {
-        case .play(let term):
-            if !term.isEmpty, let selected { return PlaybackFeedback.playing(selected) }
-            return PlaybackFeedback.resumed()
-        case .pause:
-            return PlaybackFeedback.paused()
-        case .resume:
-            return PlaybackFeedback.resumed()
-        case .next:
-            return PlaybackFeedback.nextTrack()
-        case .previous:
-            return PlaybackFeedback.previousTrack()
-        case .shuffle(let action):
-            switch action {
-            case .on: return PlaybackFeedback.shuffle(true)
-            case .off: return PlaybackFeedback.shuffle(false)
-            case .toggle:
-                if let shuffleBefore { return PlaybackFeedback.shuffle(!shuffleBefore) }
-                return PlaybackFeedback.shuffleToggled()
-            }
-        case .setRepeat(let mode):
-            return PlaybackFeedback.repeatMode(mode)
         }
     }
 

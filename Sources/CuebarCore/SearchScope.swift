@@ -8,6 +8,10 @@ import Foundation
 public enum SearchScope: String, CaseIterable, Equatable, Sendable {
     case albums
     case playlists
+    /// Artists only — a *filter*, unlike `albums` / `playlists`, which reorder.
+    /// An artist row is a destination (its own page), not a playable item, so
+    /// there is nothing useful to show alongside it.
+    case artists
     case themes
 
     /// The music ranking this scope implies, or nil when it isn't a music scope.
@@ -15,15 +19,20 @@ public enum SearchScope: String, CaseIterable, Equatable, Sendable {
         switch self {
         case .albums: return .albums
         case .playlists: return .playlists
+        case .artists: return .artists
         case .themes: return nil
         }
     }
+
+    /// True when the scope shows *only* its kind rather than ranking it first.
+    public var selectsOnlyItsKind: Bool { self == .artists }
 
     /// The word that creates the scope when typed with a space.
     public var keyword: String {
         switch self {
         case .albums: return "album"
         case .playlists: return "playlist"
+        case .artists: return "artist"
         case .themes: return "theme"
         }
     }
@@ -33,6 +42,7 @@ public enum SearchScope: String, CaseIterable, Equatable, Sendable {
         switch self {
         case .albums: return "Album"
         case .playlists: return "Playlist"
+        case .artists: return "Artist"
         case .themes: return "Theme"
         }
     }
@@ -41,6 +51,7 @@ public enum SearchScope: String, CaseIterable, Equatable, Sendable {
         switch self {
         case .albums: return "rectangle.stack"
         case .playlists: return "music.note.list"
+        case .artists: return "music.mic"
         case .themes: return "paintpalette"
         }
     }
@@ -50,6 +61,7 @@ public enum SearchScope: String, CaseIterable, Equatable, Sendable {
         switch TextNormalizer.normalize(token) {
         case "album": return .albums
         case "playlist", "playlists": return .playlists
+        case "artist", "artists": return .artists
         case "theme", "themes": return .themes
         default: return nil
         }

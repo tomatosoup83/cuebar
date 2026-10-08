@@ -27,8 +27,11 @@ without leaving whatever you were doing.
   can download, verify and relaunch into it (`update`).
 - **Themes** — Album Art (the default) tints the panel with the cover of the track
   you're on — or, by default, whichever row you highlight — in a slowly drifting
-  gradient while music plays. Prefer plain glass? Pick **Tahoe** in Settings, or
-  type `theme ` for a Theme filter.
+  gradient while music plays. **Album Art v2** is the same idea built from
+  median-cut clusters, for covers the classic extraction flattens, with a
+  **Global Colours** option that drops the gradient for one flat mixed colour.
+  Prefer plain glass? Pick **Tahoe** in Settings, or type `theme ` for a Theme
+  filter.
 - **What's New** — after an update, a short screen lists the three most important
   changes since the version you were running.
 - **Apple Music catalog fallback** — when a song isn't in your library, Cuebar
@@ -42,6 +45,9 @@ without leaving whatever you were doing.
   Played** songs.
 - **Album artwork**, cached on disk so it appears instantly, even offline.
 - **Configurable global hotkey**, recorded from an embedded settings screen.
+- **Drivable from anywhere** — the `cuebar://` URL scheme runs commands from
+  Raycast, Shortcuts, Stream Deck or any script. See [Raycast and other
+  launchers](#raycast-and-other-launchers).
 - **Keyboard-first Liquid Glass UI** — no Dock icon, no clutter.
 
 ## Requirements
@@ -91,6 +97,31 @@ field, **Esc**, or clicking the chip clears it.
 `↑` / `↓` move through results, `Return` runs the selected row, `Esc` closes the
 palette. The search field supports the usual editing shortcuts (`⌘A`, `⌘C`,
 `⌘V`, `⌘X`, `⌘Z`).
+
+## Raycast and other launchers
+
+Cuebar registers a `cuebar://` URL scheme, so anything that can open a URL can
+run a Cuebar command — the input is exactly what you'd type into the palette:
+
+```
+cuebar://run?command=next
+cuebar://run?command=shuffle%20off
+cuebar://run?command=album%20after%20hours
+cuebar://rebuild
+```
+
+Cuebar shows the result as its usual toast, so the launcher doesn't have to:
+`Playing “Take On Me”`, a permission explanation, or `No match for “…”`.
+Commands that need the indexed library wait for it if Cuebar had to launch
+first, and `artist ` is the one scope that stays window-only (artist rows are
+pages, not playable tracks).
+
+A ready-made **Raycast extension** lives in [`raycast/`](raycast/) — a
+**Run Cuebar Command** command with a text argument, plus one-keystroke
+**Pause / Play / Next / Previous / Toggle Shuffle** commands you can assign
+hotkeys to. It talks only to the URL scheme above: Raycast never touches Music
+itself, so Cuebar keeps the single Automation grant. See
+[`raycast/README.md`](raycast/README.md) to run it in development mode.
 
 ## Settings
 
@@ -166,6 +197,7 @@ Sources/Cuebar/       # AppKit + SwiftUI shell: hotkey, panel, settings
 Tests/                # unit tests (swift test)
 Scripts/              # build + icon generation
 Resources/            # Info.plist, generated app icon
+raycast/              # optional Raycast extension (a cuebar:// client)
 ```
 
 ## Development

@@ -62,13 +62,40 @@ final class QuickActionsTests: XCTestCase {
 
     func testAlbumActions() {
         let items = QuickActions.items(for: .music(album()))
-        XCTAssertEqual(titles(items), ["Play Album", "Open in Music", "Dismiss"])
+        XCTAssertEqual(titles(items), ["Play Album", "View Album", "Open in Music", "Dismiss"])
         XCTAssertNil(items.first(where: { $0.action == .like }))
+        // The menu teaches the shortcut the row has in the list.
+        XCTAssertEqual(items.first(where: { $0.action == .openAlbum })?.shortcut, "⌘↩")
+    }
+
+    /// Only library albums have a track list to show, so a catalog album gets no
+    /// extended view row.
+    func testCatalogAlbumHasNoExtendedView() {
+        let catalog = MusicCandidate(
+            id: "catalog:album:1", kind: .album, source: .catalog,
+            title: "Hunting High and Low", artist: "a-ha", album: ""
+        )
+        let items = QuickActions.items(for: .music(catalog))
+        XCTAssertEqual(titles(items), ["Play Album", "Open in Music", "Dismiss"])
+        XCTAssertNil(items.first(where: { $0.action == .openAlbum }))
     }
 
     func testPlaylistActions() {
         let items = QuickActions.items(for: .music(playlist()))
         XCTAssertEqual(titles(items), ["Play Playlist", "Open in Music", "Dismiss"])
+    }
+
+    /// An artist row has no single track, so it only offers its page.
+    func testArtistActionsOpenTheArtistPage() {
+        let artist = MusicCandidate(
+            id: "ar", kind: .artist, source: .library,
+            title: "Radiohead", artist: "Radiohead", album: "", trackCount: 92
+        )
+        let items = QuickActions.items(for: .music(artist))
+        XCTAssertEqual(titles(items), ["Open Artist", "Dismiss"])
+        XCTAssertEqual(items.first?.action, .primary)
+        XCTAssertNil(items.first(where: { $0.action == .like }))
+        XCTAssertNil(items.first(where: { $0.action == .openInMusic }))
     }
 
     func testCommandActions() {

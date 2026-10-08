@@ -1,0 +1,76 @@
+{
+  "$schema": "https://www.raycast.com/schemas/extension.json",
+  "name": "cuebar",
+  "title": "Cuebar",
+  "description": "Send commands to Cuebar, the command palette for Apple Music.",
+  "icon": "icon.png",
+  "author": "tomatosoup83",
+  "categories": ["Media"],
+  "license": "MIT",
+  "commands": [
+    {
+      "name": "run-command",
+      "title": "Run Cuebar Command",
+      "subtitle": "Cuebar",
+      "description": "Type a Cuebar command — pause, next, shuffle off — or a song, album or playlist name.",
+      "mode": "no-view",
+      "arguments": [
+        {
+          "name": "command",
+          "type": "text",
+          "placeholder": "pause, next, take on me, album swag ii",
+          "required": true
+        }
+      ]
+    },
+    {
+      "name": "pause",
+      "title": "Pause",
+      "subtitle": "Cuebar",
+      "description": "Pause Apple Music through Cuebar.",
+      "mode": "no-view"
+    },
+    {
+      "name": "resume",
+      "title": "Play / Resume",
+      "subtitle": "Cuebar",
+      "description": "Resume playback through Cuebar.",
+      "mode": "no-view"
+    },
+    {
+      "name": "next",
+      "title": "Next Track",
+      "subtitle": "Cuebar",
+      "description": "Skip to the next track through Cuebar.",
+      "mode": "no-view"
+    },
+    {
+      "name": "previous",
+      "title": "Previous Track",
+      "subtitle": "Cuebar",
+      "description": "Go back to the previous track through Cuebar.",
+      "mode": "no-view"
+    },
+    {
+      "name": "toggle-shuffle",
+      "title": "Toggle Shuffle",
+      "subtitle": "Cuebar",
+      "description": "Turn Apple Music shuffle on or off through Cuebar.",
+      "mode": "no-view"
+    }
+  ],
+  "dependencies": {
+    "@raycast/api": "^1.83.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "typescript": "^5.8.2"
+  },
+  "scripts": {
+    "build": "ray build -e dist",
+    "dev": "ray develop",
+    "lint": "ray lint",
+    "fix-lint": "ray lint --fix",
+    "publish": "npx @raycast/api@latest publish"
+  }
+}

@@ -22,6 +22,7 @@ struct SettingsView: View {
                     hotKeyRow
                     themeRow
                     followSelectionRow
+                    globalColoursRow
                     updateRow
                     whatsNewRow
                     onboardingRow
@@ -163,7 +164,7 @@ struct SettingsView: View {
     /// Only meaningful for Album Art, so it is hidden under Tahoe.
     @ViewBuilder
     private var followSelectionRow: some View {
-        if model.theme == .albumArt {
+        if model.theme.isAlbumArt {
             HStack(spacing: 12) {
                 tile("wand.and.stars")
 
@@ -190,6 +191,39 @@ struct SettingsView: View {
         Binding(
             get: { model.ambientFollowsSelection },
             set: { model.setFollowsSelection($0) }
+        )
+    }
+
+    /// Only meaningful for Album Art v2, so it is hidden for the other themes.
+    @ViewBuilder
+    private var globalColoursRow: some View {
+        if model.theme == .albumArtV2 {
+            HStack(spacing: 12) {
+                tile("circle.hexagongrid")
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Global Colours")
+                        .font(.system(size: 15, weight: .medium))
+                    Text("Mix the whole cover into one colour (no gradient)")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer(minLength: 8)
+
+                Toggle("Global Colours", isOn: globalColoursBinding)
+                    .labelsHidden()
+                    .toggleStyle(.checkbox)
+            }
+            .settingsRow(isSelected: model.selectedSettingsRow == .globalColours)
+            .onTapGesture { model.selectSettingsRow(.globalColours) }
+        }
+    }
+
+    private var globalColoursBinding: Binding<Bool> {
+        Binding(
+            get: { model.usesGlobalColours },
+            set: { model.setUsesGlobalColours($0) }
         )
     }
 

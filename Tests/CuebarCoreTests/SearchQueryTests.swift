@@ -83,4 +83,39 @@ final class SearchQueryTests: XCTestCase {
         XCTAssertEqual(query.term, "")
         XCTAssertEqual(query.preference, .songs)
     }
+
+    // MARK: - Artist scope
+
+    func testArtistKeywordSetsTheArtistScope() {
+        let query = SearchQuery.parse("artist radiohead")
+        XCTAssertEqual(query.term, "radiohead")
+        XCTAssertEqual(query.scope, .artists)
+        XCTAssertEqual(query.preference, .artists)
+    }
+
+    func testArtistsPluralKeyword() {
+        let query = SearchQuery.parse("focus artists")
+        XCTAssertEqual(query.term, "focus")
+        XCTAssertEqual(query.scope, .artists)
+    }
+
+    func testArtistAloneStaysLiteral() {
+        let query = SearchQuery.parse("artist")
+        XCTAssertEqual(query.term, "artist")
+        XCTAssertNil(query.scope)
+    }
+
+    func testArtistKeywordWithTrailingSpaceScopesAnEmptyTerm() {
+        let query = SearchQuery.parse("artist ")
+        XCTAssertEqual(query.term, "")
+        XCTAssertEqual(query.scope, .artists)
+    }
+
+    /// `artist ` is the one scope that filters instead of reordering.
+    func testOnlyTheArtistScopeSelectsItsKind() {
+        XCTAssertTrue(SearchScope.artists.selectsOnlyItsKind)
+        XCTAssertFalse(SearchScope.albums.selectsOnlyItsKind)
+        XCTAssertFalse(SearchScope.playlists.selectsOnlyItsKind)
+        XCTAssertFalse(SearchScope.themes.selectsOnlyItsKind)
+    }
 }

@@ -60,6 +60,7 @@ final class AmbientPaletteCoordinatorTests: XCTestCase {
     /// Records what the coordinator asked to resolve and what it slept.
     private final class Recorder {
         var sources: [ArtworkSource] = []
+        var styles: [PaletteStyle] = []
         var sleeps: [Duration] = []
     }
 
@@ -71,8 +72,9 @@ final class AmbientPaletteCoordinatorTests: XCTestCase {
         AmbientPaletteCoordinator(
             followsSelection: followsSelection,
             delay: .milliseconds(350),
-            resolve: { source in
+            resolve: { source, style in
                 recorder.sources.append(source)
+                recorder.styles.append(style)
                 return palettes[source.cacheKey]
             },
             sleep: { duration in
@@ -295,5 +297,75 @@ final class AmbientPaletteCoordinatorTests: XCTestCase {
         coordinator.setFollowsSelection(true)
         await coordinator.settle()
         XCTAssertEqual(coordinator.palette?.accent.red ?? -1, 0.2, accuracy: 0.001)
+    }
+
+    /// Switching between the two Album Art themes keeps the same artwork but
+    /// must extract again with the new style — otherwise the panel would keep
+    /// the old palette because the *source* never changed.
+    func testSwitchingStyleReResolvesTheSameArtwork() async {
+        let recorder = Recorder()
+        let coordinator = makeCoordinator(
+            followsSelection: false,
+            palettes: [cacheKey(album: "NowAlbum"): palette(0.1)],
+            recorder: recorder
+        )
+
+        coordinator.setEnabled(true)
+        coordinator.update(nowPlaying: track)
+        await coordinator.settle()
+        XCTAssertEqual(recorder.styles, [.classic])
+
+        coordinator.setStyle(.clustered)
+        await coordinator.settle()
+
+        XCTAssertEqual(recorder.styles, [.classic, .clustered])
+        XCTAssertEqual(
+            recorder.sources.map(\.cacheKey),
+            [cacheKey(album: "NowAlbum"), cacheKey(album: "NowAlbum")],
+            "the artwork must be resolved again with the new style"
+        )
+        XCTAssertEqual(coordinator.palette?.accent.red ?? -1, 0.1, accuracy: 0.001)
+    }
+
+    /// Toggling the global-colours option on Album Art v2 is a style change too,
+    /// so it must re-resolve the same artwork without a gradient.
+    func testSwitchingClusterLayoutReResolves() async {
+        let recorder = Recorder()
+        let coordinator = makeCoordinator(
+            followsSelection: false,
+            palettes: [cacheKey(album: "NowAlbum"): palette(0.1)],
+            recorder: recorder
+        )
+
+        coordinator.setEnabled(true)
+        coordinator.setStyle(.clustered)
+        coordinator.update(nowPlaying: track)
+        await coordinator.settle()
+        XCTAssertEqual(recorder.styles, [.clustered])
+
+        coordinator.setStyle(.clusteredGlobal)
+        await coordinator.settle()
+        XCTAssertEqual(recorder.styles, [.clustered, .clusteredGlobal])
+    }
+
+    /// Setting the style it is already using is a no-op, so a theme rebuild
+    /// can't cause a redundant resolve.
+    func testSettingTheSameStyleDoesNothing() async {
+        let recorder = Recorder()
+        let coordinator = makeCoordinator(
+            followsSelection: false,
+            palettes: [cacheKey(album: "NowAlbum"): palette(0.1)],
+            recorder: recorder
+        )
+
+        coordinator.setEnabled(true)
+        coordinator.setStyle(.classic)
+        coordinator.update(nowPlaying: track)
+        await coordinator.settle()
+        XCTAssertEqual(recorder.sources.count, 1)
+
+        coordinator.setStyle(.classic)
+        await coordinator.settle()
+        XCTAssertEqual(recorder.sources.count, 1)
     }
 }

@@ -22,7 +22,9 @@ final class AppleScriptLibraryProviderTests: XCTestCase {
             joined(["100.0", "50.0"]),         // durations
             joined(["Band", "Band"]),          // album artists
             joined(["1", "1"]),                // disc numbers
-            joined(["1", "2"])                 // track numbers
+            joined(["1", "2"]),                // track numbers
+            joined(["2007", "2007"]),          // years
+            joined(["Alternative", "Rock"])    // genres
         ])
 
         let tracks = AppleScriptLibraryProvider.parse(text)
@@ -33,6 +35,36 @@ final class AppleScriptLibraryProviderTests: XCTestCase {
         XCTAssertEqual(tracks[0].trackNumber, 1)
         XCTAssertEqual(tracks[1].trackNumber, 2)
         XCTAssertEqual(tracks[0].persistentID, "ID1")
+        XCTAssertEqual(tracks[0].year, 2007)
+        XCTAssertEqual(tracks[0].genre, "Alternative")
+        XCTAssertEqual(tracks[1].genre, "Rock")
+    }
+
+    /// The album facts the extended view shows come from these two fields, so an
+    /// untagged track must read as absent rather than as `0` or `""`.
+    func testMissingYearAndGenreAreNil() {
+        let text = raw([
+            joined(["One"]), joined(["Band"]), joined(["Record"]), joined(["ID1"]),
+            joined(["100.0"]), joined(["Band"]), joined(["1"]), joined(["1"]),
+            joined(["missing value"]), joined([""])
+        ])
+        let tracks = AppleScriptLibraryProvider.parse(text)
+        XCTAssertEqual(tracks.count, 1)
+        XCTAssertNil(tracks[0].year)
+        XCTAssertNil(tracks[0].genre)
+    }
+
+    /// A short response from a cache written before these fields existed still
+    /// parses — the reason the index version did not need a bump.
+    func testOlderShortResponseHasNoFacts() {
+        let text = raw([
+            joined(["One"]), joined(["Band"]), joined(["Record"]), joined(["ID1"]),
+            joined(["100.0"]), joined(["Band"]), joined(["1"]), joined(["1"])
+        ])
+        let tracks = AppleScriptLibraryProvider.parse(text)
+        XCTAssertEqual(tracks.count, 1)
+        XCTAssertNil(tracks[0].year)
+        XCTAssertNil(tracks[0].genre)
     }
 
     func testMissingTrailingSectionsAreTolerated() {

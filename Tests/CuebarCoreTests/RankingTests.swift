@@ -138,4 +138,73 @@ final class RankingTests: XCTestCase {
             "pl"
         )
     }
+
+    func testArtistPreferencePutsArtistsFirst() {
+        let artist = MusicCandidate(
+            id: "ar", kind: .artist, source: .library,
+            title: "Nightfall", artist: "", album: ""
+        )
+        let track = song("song", "Nightfall", source: .library)
+
+        // Without the artist scope a song leads; with it, the artist row does.
+        XCTAssertEqual(Ranking.rank([track, artist], query: "nightfall").first?.id, "song")
+        XCTAssertEqual(
+            Ranking.rank([track, artist], query: "nightfall", preference: .artists).first?.id,
+            "ar"
+        )
+    }
+
+    /// Typing an artist's name still surfaces their row by default (its title is
+    /// the artist), which is how the artist page is reachable outside the scope.
+    func testExactArtistNameSurfacesTheArtistRow() {
+        let artist = MusicCandidate(
+            id: "ar", kind: .artist, source: .library,
+            title: "Radiohead", artist: "Radiohead", album: ""
+        )
+        let track = song("song", "Creep", artist: "Radiohead", source: .library)
+        XCTAssertEqual(Ranking.rank([track, artist], query: "radiohead").first?.id, "ar")
+    }
+
+    // MARK: - rankWithin
+
+    func testRankWithinArtistRanksByTitle() {
+        let tracks = [
+            song("a", "Karma Police", artist: "Radiohead"),
+            song("b", "Creep", artist: "Radiohead")
+        ]
+        XCTAssertEqual(Ranking.rankWithin(tracks, query: "creep").map(\.id), ["b"])
+    }
+
+    /// The whole point of `rankWithin`: the artist's name is on every
+    /// track, so the usual artist fallback would return the entire catalogue.
+    func testRankWithinArtistIgnoresTheArtistName() {
+        let tracks = [
+            song("a", "Karma Police", artist: "Radiohead"),
+            song("b", "Creep", artist: "Radiohead")
+        ]
+        XCTAssertTrue(Ranking.rankWithin(tracks, query: "radio").isEmpty)
+    }
+
+    func testRankWithinArtistIgnoresTheAlbumName() {
+        let tracks = [song("a", "Creep", artist: "Radiohead", album: "Pablo Honey")]
+        XCTAssertTrue(Ranking.rankWithin(tracks, query: "pablo").isEmpty)
+    }
+
+    func testRankWithinArtistToleratesTypos() {
+        let tracks = [
+            song("a", "Karma Police", artist: "Radiohead"),
+            song("b", "Creep", artist: "Radiohead")
+        ]
+        XCTAssertEqual(Ranking.rankWithin(tracks, query: "crep").map(\.id), ["b"])
+    }
+
+    func testRankWithinArtistRespectsTheLimit() {
+        let tracks = (0..<10).map { song("s\($0)", "Song \($0)", artist: "Band") }
+        XCTAssertEqual(Ranking.rankWithin(tracks, query: "song", limit: 3).count, 3)
+    }
+
+    func testRankWithinArtistEmptyQueryReturnsThePrefix() {
+        let tracks = (0..<5).map { song("s\($0)", "Song \($0)", artist: "Band") }
+        XCTAssertEqual(Ranking.rankWithin(tracks, query: "  ", limit: 2).map(\.id), ["s0", "s1"])
+    }
 }

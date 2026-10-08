@@ -7,6 +7,10 @@ import CuebarCore
 /// Clicking it clears the scope.
 struct SearchScopeChip: View {
     let scope: SearchScope
+    /// Overrides the default "clear the filter" tooltip. The artist page reuses
+    /// this chip as its "back" affordance, where "clear the filter" would be
+    /// misleading.
+    var help: String = ""
     let onClear: () -> Void
 
     var body: some View {
@@ -24,9 +28,9 @@ struct SearchScopeChip: View {
         .background(Color.accentColor.opacity(0.18), in: Capsule())
         .contentShape(Capsule())
         .onTapGesture(perform: onClear)
-        .help("Clear the \(title) filter")
+        .help(help.isEmpty ? "Clear the \(title) filter" : help)
         .accessibilityLabel("\(title) filter")
-        .accessibilityHint("Activate to clear")
+        .accessibilityHint(help.isEmpty ? "Activate to clear" : help)
     }
 
     private var title: String { scope.title }

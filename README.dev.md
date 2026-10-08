@@ -269,11 +269,14 @@ key secret).
 
 ## Theming
 
-Two themes, chosen in **Settings → Theme** or by typing `theme`:
+Three themes, chosen in **Settings → Theme** or by typing `theme`:
 
 - **Album Art** (default) — a light gradient derived from album art washes the
   panel *behind* the glass, and the selected row carries a small accent in its
   own album's colour.
+- **Album Art v2** — the same treatment, but the palette is built from
+  median-cut clusters instead of a single histogram bucket. An opt-in A/B for
+  covers where the classic extraction collapses several hues into one accent.
 - **Tahoe** — plain Liquid Glass, unchanged.
 
 By default the ambient gradient **follows the highlighted row** rather than the
@@ -295,22 +298,33 @@ to Tahoe — is kept.
   on. A cover change crossfades whole meshes (one per palette). Reduce Motion
   keeps it still.
 - `PaletteExtractor` (Core, pure + deterministic) downsamples the cached 256 px
-  artwork to a 24×24 grid, averages the top/bottom thirds for the two gradient
-  stops, and picks the most *saturated* colour bucket for the accent. Each stop
+  artwork to a 24×24 grid and picks three raw base colours, then runs them
+  through a shared legibility transform. Two algorithms choose the base colours:
+  **classic** averages the top/bottom thirds for the two gradient stops and picks
+  the most *saturated* 4-bit histogram bucket for the accent; **clustered** runs
+  deterministic median-cut quantization into `clusterBudget` (8) clusters, feeds
+  the upper/lower clusters into the top/bottom stops (keeping the vertical
+  gradient) and the most vivid cluster into the accent. Either way each stop
   borrows 45% of its colour from that signature colour (averaging a third of a
   *photograph* mixes hues into grey), is lifted to a **luma floor of 0.70** so a
   dark cover can't darken the panel, then has its chroma pulled into a band
   (0.16–0.40 for the wash, 0.28–0.70 for the accent) so it is never muddy or
   garish. Artwork below a chroma confidence floor falls back to plain glass.
+- **Global Colours** (Album Art v2 only, **off by default**) — turns off the
+  gradient: with `ClusterLayout.global` every cluster is mixed into one colour
+  used for both stops, a pywal-style flat wash. Set it in Settings or via the
+  `theme ` scope's "Global Colours" row; stored in
+  `ThemeStore.globalClusteredColours` and folded into the `PaletteStyle`
+  (algorithm + `ClusterLayout`) that keys the palette cache.
 - The wash strength is `ThemeBackground.washOpacity` (default **0.36**) and the
   glass tint is `ThemeGlass.tintOpacity` (default **0.35**) — the tint is the main
   colour lever. Both are overridable at launch with `CUEBAR_WASH_OPACITY` /
   `CUEBAR_GLASS_TINT` for quick A/B.
 - Type `theme ` (with a space) for a **Theme scope**, exactly like `album ` /
   `playlist `: the field shows a chip and the list holds only the theme options —
-  Tahoe, Album Art, and the follow-the-highlighted-row toggle. `SearchScope` is
-  its own type rather than a `RankPreference`, because a theme scope is not a music
-  ranking; only the music scopes map back to one.
+  Tahoe, Album Art, Album Art v2, and the follow-the-highlighted-row toggle.
+  `SearchScope` is its own type rather than a `RankPreference`, because a theme
+  scope is not a music ranking; only the music scopes map back to one.
 - **Settings is keyboard-navigable** like the results list: ↑/↓ move between rows
   (the row list comes from `SettingsRow.visibleRows(theme:)`, so hiding the follow
   row can never leave the highlight dangling) and ⏎ runs the highlighted row's
@@ -324,7 +338,7 @@ to Tahoe — is kept.
   appearance-adaptive system colours.
   Which rows qualify is `RowTintPolicy` — the now-playing row always, and any row
   when the option below is on.
-- **Follow the Highlighted Row** (Settings → Theme, Album Art only; **on by
+- **Follow the Highlighted Row** (Settings → Theme, Album Art themes only; **on by
   default**): the whole panel colour follows the highlighted row instead of the
   now-playing track, with
   a **350 ms pause** before each change and a **700 ms crossfade**. The pause is
@@ -440,11 +454,11 @@ Sources/CuebarCore/          # testable, no UI
   UpdatePreferenceStore.swift# auto-check flag (UserDefaults)
   UpdateFeedback.swift       # update toasts
   OnboardingStore.swift      # first-run completion flag (UserDefaults)
-  ThemeID.swift              # Tahoe / Album Art
-  ThemeStore.swift           # chosen theme (UserDefaults)
+  ThemeID.swift              # Tahoe / Album Art / Album Art v2
+  ThemeStore.swift           # chosen theme + options (UserDefaults)
   ThemeColor.swift           # sRGB value type + saturation/blend helpers
   AlbumPalette.swift         # top/bottom/accent stops + usability
-  PaletteExtractor.swift     # artwork pixels -> legible palette (pure)
+  PaletteExtractor.swift     # artwork pixels -> legible palette (classic + clustered, pure)
   Command.swift              # Command + CommandParser
   CommandCatalog.swift       # command entries + typed matching
   CommandExecutor.swift      # applies commands to a MusicController
@@ -520,17 +534,19 @@ not captured, but layout, rows and text are.
 
 ## Tests
 
-`make test` runs 268 unit tests covering the play history log (notification
-parsing, persistence, merging with Music's dates), the recently played shelf (parsing,
-ordering, exclusions, relative labels, home composition), command parsing, command matching
-(including that `play take on me` matches no command), now-playing parsing
-(incl. shuffle/repeat) and progress interpolation, list composition, artwork
-cache keys/persistence, the launch-hotkey preference (formatting, validation,
-persistence), the onboarding flag and Automation permission mapping,
+`make test` runs the full suite (~300 unit tests) covering the play history log
+(notification parsing, persistence, merging with Music's dates), the recently
+played shelf (parsing, ordering, exclusions, relative labels, home composition),
+command parsing, command matching (including that `play take on me` matches no
+command), now-playing parsing (incl. shuffle/repeat) and progress interpolation,
+list composition, artwork cache keys/persistence, the launch-hotkey preference
+(formatting, validation, persistence), the onboarding flag and Automation
+permission mapping,
 version parsing/comparison, the GitHub update check + Ed25519 verification +
 swap script + update preference, the theme palette (colour clamping, legibility
-transform, colourless-artwork fallback, determinism) and the theme preference,
-catalog-to-library resolution (never
+transform, colourless-artwork fallback, determinism, and both the classic and
+median-cut-clustered algorithms) and the theme preference, catalog-to-library
+resolution (never
 substituting a same-title track by a different artist), album grouping/ordering,
 scope browse lists, the `album`/`playlist` scope keywords, library parsing
 (album artist/disc/track and playlists), repeat modes, toast copy and

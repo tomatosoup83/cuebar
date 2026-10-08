@@ -23,6 +23,7 @@ public struct SearchQuery: Equatable, Sendable {
         switch preference {
         case .albums: scope = .albums
         case .playlists: scope = .playlists
+        case .artists: scope = .artists
         case .songs: scope = nil
         }
         self.init(term: term, scope: scope)

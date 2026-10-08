@@ -9,10 +9,15 @@ public enum ThemeScopeMenu {
     public static func entries(
         currentTheme: ThemeID,
         followsSelection: Bool,
+        globalColours: Bool = false,
         filter: String = ""
     ) -> [CommandEntry] {
-        let all = themeEntries(currentTheme: currentTheme)
-            + [followEntry(followsSelection: followsSelection)]
+        var all = themeEntries(currentTheme: currentTheme)
+        all.append(followEntry(followsSelection: followsSelection))
+        // The global-colours option only means something for Album Art v2.
+        if currentTheme == .albumArtV2 {
+            all.append(globalColoursEntry(globalColours: globalColours))
+        }
 
         let normalized = TextNormalizer.normalize(filter)
         guard !normalized.isEmpty else { return all }
@@ -47,6 +52,21 @@ public enum ThemeScopeMenu {
             action: .setFollowsSelection(!followsSelection),
             keywords: ["follow", "follow highlighted row", "highlighted", "selection",
                        "ambient", "option", "toggle"],
+            badge: "Option"
+        )
+    }
+
+    private static func globalColoursEntry(globalColours: Bool) -> CommandEntry {
+        CommandEntry(
+            id: "theme.globalColours",
+            title: "Global Colours",
+            subtitle: globalColours
+                ? "On · one colour mixed from the whole cover"
+                : "Off · keep the cover's vertical gradient",
+            symbolName: globalColours ? "checkmark.circle.fill" : "circle.hexagongrid",
+            action: .setGlobalColours(!globalColours),
+            keywords: ["global", "global colours", "global colors", "gradient",
+                       "no gradient", "flat", "pywal", "cluster", "option", "toggle"],
             badge: "Option"
         )
     }

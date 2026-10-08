@@ -7,3 +7,10 @@ ocsession.txt
 ocsesh*.txt
 corner radius.png
 *.mov
+
+# Screenshots and bug captures dropped at the repo root (anchored, so
+# docs/screenshots and raycast/ assets stay visible)
+/*.png
+/*.jpg
+/*.jpeg
+/*.gif

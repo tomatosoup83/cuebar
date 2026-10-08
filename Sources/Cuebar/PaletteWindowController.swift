@@ -22,7 +22,9 @@ final class PaletteWindowController {
     private let model: PaletteModel
     private let toastController: ToastWindowController
     private let ambientCoordinator = AmbientPaletteCoordinator(
-        resolve: { await PaletteCache.shared.palette(for: $0) }
+        resolve: { source, style in
+            await PaletteCache.shared.palette(for: source, style: style)
+        }
     )
     private var cancellables = Set<AnyCancellable>()
     private var keyMonitor: Any?
@@ -50,6 +52,8 @@ final class PaletteWindowController {
     var onThemeChange: ((ThemeID) -> Void)?
     /// Persists the "ambient follows the highlighted row" option.
     var onAmbientFollowsSelectionChange: ((Bool) -> Void)?
+    /// Persists the Album Art v2 "global colours" option.
+    var onGlobalColoursChange: ((Bool) -> Void)?
     /// Called when the What's New screen is presented.
     var onWhatsNewShown: (() -> Void)?
 
@@ -59,7 +63,8 @@ final class PaletteWindowController {
         libraryProvider: LibrarySearchProvider,
         hotKey: HotKeyPreference = .default,
         theme: ThemeID = .albumArt,
-        ambientFollowsSelection: Bool = true
+        ambientFollowsSelection: Bool = true,
+        usesGlobalColours: Bool = false
     ) {
         model = PaletteModel(
             searchService: searchService,
@@ -67,7 +72,8 @@ final class PaletteWindowController {
             libraryProvider: libraryProvider,
             hotKey: hotKey,
             theme: theme,
-            ambientFollowsSelection: ambientFollowsSelection
+            ambientFollowsSelection: ambientFollowsSelection,
+            usesGlobalColours: usesGlobalColours
         )
 
         let rect = NSRect(origin: .zero, size: PaletteMetrics.panelSize)
@@ -122,12 +128,22 @@ final class PaletteWindowController {
         model.onThemeChange = { [weak self] theme in
             guard let self else { return }
             self.onThemeChange?(theme)
-            self.ambientCoordinator.setEnabled(theme == .albumArt)
+            self.ambientCoordinator.setEnabled(theme.isAlbumArt)
+            self.ambientCoordinator.setStyle(
+                theme.paletteStyle(globalClusteredColours: self.model.usesGlobalColours) ?? .classic
+            )
         }
         model.onAmbientFollowsSelectionChange = { [weak self] follows in
             guard let self else { return }
             self.onAmbientFollowsSelectionChange?(follows)
             self.ambientCoordinator.setFollowsSelection(follows)
+        }
+        model.onGlobalColoursChange = { [weak self] global in
+            guard let self else { return }
+            self.onGlobalColoursChange?(global)
+            self.ambientCoordinator.setStyle(
+                self.model.theme.paletteStyle(globalClusteredColours: global) ?? .classic
+            )
         }
         model.onSelectionChange = { [weak self] item in
             self?.ambientCoordinator.update(selection: item)
@@ -137,7 +153,10 @@ final class PaletteWindowController {
         }
         model.onOpenThemeMenu = { [weak self] in self?.showThemeMenu() }
         model.onWhatsNewShown = { [weak self] in self?.onWhatsNewShown?() }
-        ambientCoordinator.setEnabled(theme == .albumArt)
+        ambientCoordinator.setEnabled(theme.isAlbumArt)
+        ambientCoordinator.setStyle(
+            theme.paletteStyle(globalClusteredColours: usesGlobalColours) ?? .classic
+        )
         ambientCoordinator.setFollowsSelection(ambientFollowsSelection)
         ambientCoordinator.$palette
             .sink { [weak self] palette in
@@ -308,6 +327,82 @@ final class PaletteWindowController {
         model.queryChanged()
     }
 
+    /// Development helper: type `text` into the field one character at a time,
+    /// the way a user would.
+    ///
+    /// Keystrokes are spread across runloop turns (not applied in one go) so
+    /// SwiftUI's `onChange` — including the one a programmatic field clear
+    /// queues — fires *between* them, exactly as it does for real typing. That
+    /// timing is where scope-promotion bugs hide.
+    func debugType(
+        _ text: String,
+        perCharacterDelay: TimeInterval = 0.03,
+        completion: (() -> Void)? = nil
+    ) {
+        model.query = ""
+        model.queryChanged()
+        var remaining = Array(text)
+
+        func typeNext() {
+            guard !remaining.isEmpty else {
+                completion?()
+                return
+            }
+            model.query.append(remaining.removeFirst())
+            model.queryChanged()
+            DispatchQueue.main.asyncAfter(deadline: .now() + perCharacterDelay) {
+                typeNext()
+            }
+        }
+        typeNext()
+    }
+
+    /// Development helper: open the artist page for the first artist matching
+    /// `name`, going through the same scope → row → ⏎ path a user takes, then
+    /// optionally type `filter` into the page's field.
+    func debugOpenArtist(named name: String, filter: String? = nil) {
+        debugType("artist \(name)") { [weak self] in
+            guard let self else { return }
+            self.model.executeSelection()
+            if let filter, !filter.isEmpty {
+                self.debugType(filter)
+            }
+        }
+    }
+
+    /// Development helper: open the extended album view for the first album
+    /// matching `title`, via the real scope → row → ⌘⏎ path.
+    func debugOpenAlbum(named title: String, filter: String? = nil) {
+        debugType("album \(title)") { [weak self] in
+            guard let self else { return }
+            self.model.executeExtendedSelection()
+            if let filter, !filter.isEmpty {
+                self.debugType(filter)
+            }
+        }
+    }
+
+    /// Development helper: highlight the nearest library album row.
+    func debugSelectNearestAlbumRow() {
+        model.debugSelectNearestAlbumRow()
+    }
+
+    /// Development helper: ⌘⏎ on whatever row is highlighted, without changing
+    /// the query — the way a user opens the album view from a normal search.
+    func debugExtendedSelection() {
+        model.executeExtendedSelection()
+    }
+
+    /// Development helper: leave the album view, as Esc does.
+    func debugExitAlbum() {
+        model.exitAlbumView()
+    }
+
+    /// Development helper: leave the artist page, as Esc does.
+    func debugExitArtist() {
+        model.exitArtist()
+    }
+
     /// Development helper: pretend the current track is playing.
     func debugForcePlaying() {
         model.debugForcePlaying()
@@ -386,6 +481,11 @@ final class PaletteWindowController {
         model.setFollowsSelection(follows)
     }
 
+    /// Development helper: turn the Album Art v2 "global colours" option on/off.
+    func debugSetGlobalColours(_ global: Bool) {
+        model.setUsesGlobalColours(global)
+    }
+
     /// Development helper: step the selection rapidly then stop, and report whether
     /// the ambient colour ended up on the row that is actually selected. This is
     /// the deterministic reproduction of "cycle fast, stop, and the colour doesn't
@@ -417,7 +517,8 @@ final class PaletteWindowController {
     }
 
     /// Development helper: log the extracted palettes for the first few album
-    /// rows, so the tuning can be judged across a spread of real covers.
+    /// rows — both algorithms side by side — so the tuning can be judged across
+    /// a spread of real covers and the two Album Art themes compared.
     func debugDumpPalettes(count: Int = 10) {
         Task { [weak self] in
             try? await Task.sleep(nanoseconds: 1_200_000_000)
@@ -428,9 +529,19 @@ final class PaletteWindowController {
                       case .music(let candidate) = item,
                       candidate.kind == .album,
                       let source = item.artworkSource else { continue }
-                guard let palette = await PaletteCache.shared.palette(for: source) else { continue }
-                NSLog("Cuebar: dump album=\"\(candidate.title)\" usable=\(palette.isUsable) "
-                      + "top=\(Self.describe(palette.top)) accent=\(Self.describe(palette.accent))")
+                let classic = await PaletteCache.shared.palette(for: source, style: .classic)
+                let clustered = await PaletteCache.shared.palette(for: source, style: .clustered)
+                let global = await PaletteCache.shared.palette(for: source, style: .clusteredGlobal)
+                NSLog("Cuebar: dump album=\"\(candidate.title)\" "
+                      + "classic[usable=\(classic?.isUsable ?? false) "
+                      + "top=\(classic.map { Self.describe($0.top) } ?? "-") "
+                      + "accent=\(classic.map { Self.describe($0.accent) } ?? "-")] "
+                      + "clustered[usable=\(clustered?.isUsable ?? false) "
+                      + "top=\(clustered.map { Self.describe($0.top) } ?? "-") "
+                      + "accent=\(clustered.map { Self.describe($0.accent) } ?? "-")] "
+                      + "global[usable=\(global?.isUsable ?? false) "
+                      + "top=\(global.map { Self.describe($0.top) } ?? "-") "
+                      + "accent=\(global.map { Self.describe($0.accent) } ?? "-")]")
                 logged += 1
             }
             NSLog("Cuebar: dumped \(logged) album palettes")
@@ -587,6 +698,13 @@ final class PaletteWindowController {
                 return nil
             }
 
+            // ⌘⏎ opens the extended album view for a library album row.
+            if event.modifierFlags.contains(.command),
+               Int(event.keyCode) == kVK_Return || Int(event.keyCode) == kVK_ANSI_KeypadEnter {
+                self.model.executeExtendedSelection()
+                return nil
+            }
+
             // Standard editing shortcuts. An agent app has no Edit menu, so
             // AppKit never dispatches these; forward them to the field editor.
             if event.modifierFlags.contains(.command),
@@ -605,11 +723,22 @@ final class PaletteWindowController {
                 }
             }
 
-            // Backspace on an empty field clears an active scope chip.
-            if self.model.scope != nil, self.model.query.isEmpty,
+            // Backspace on an empty field leaves the artist page, or clears an
+            // active scope chip.
+            if self.model.query.isEmpty,
                Int(event.keyCode) == kVK_Delete || Int(event.keyCode) == kVK_ForwardDelete {
-                self.model.clearScope()
-                return nil
+                if self.model.artistFocus != nil {
+                    self.model.exitArtist()
+                    return nil
+                }
+                if self.model.albumFocus != nil {
+                    self.model.exitAlbumView()
+                    return nil
+                }
+                if self.model.scope != nil {
+                    self.model.clearScope()
+                    return nil
+                }
             }
 
             switch Int(event.keyCode) {
@@ -623,7 +752,11 @@ final class PaletteWindowController {
                 self.model.executeSelection()
                 return nil
             case kVK_Escape:
-                if self.model.scope != nil {
+                if self.model.artistFocus != nil {
+                    self.model.exitArtist()
+                } else if self.model.albumFocus != nil {
+                    self.model.exitAlbumView()
+                } else if self.model.scope != nil {
                     self.model.clearScope()
                 } else {
                     self.hide()

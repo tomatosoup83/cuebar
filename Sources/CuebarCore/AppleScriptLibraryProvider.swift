@@ -40,9 +40,9 @@ public final class AppleScriptLibraryProvider: @unchecked Sendable {
     static let fieldSeparator = "\u{1f}"  // ASCII unit separator
 
     static func parse(_ raw: String) -> [MusicCandidate] {
-        // The script joins eight property lists with the record separator.
+        // The script joins ten property lists with the record separator.
         var sections = raw.components(separatedBy: listSeparator)
-        while sections.count < 8 { sections.append("") }
+        while sections.count < 10 { sections.append("") }
 
         let names = split(sections[0])
         let artists = split(sections[1])
@@ -52,6 +52,8 @@ public final class AppleScriptLibraryProvider: @unchecked Sendable {
         let albumArtists = split(sections[5])
         let discNumbers = split(sections[6])
         let trackNumbers = split(sections[7])
+        let years = split(sections[8])
+        let genres = split(sections[9])
 
         let count = names.count
         var tracks: [MusicCandidate] = []
@@ -78,7 +80,9 @@ public final class AppleScriptLibraryProvider: @unchecked Sendable {
                     persistentID: persistentID,
                     albumArtist: albumArtist.isEmpty ? nil : albumArtist,
                     discNumber: Int(value(discNumbers, at: index)),
-                    trackNumber: Int(value(trackNumbers, at: index))
+                    trackNumber: Int(value(trackNumbers, at: index)),
+                    year: Int(value(years, at: index)),
+                    genre: genres.isEmpty ? nil : nonEmpty(value(genres, at: index))
                 )
             )
         }
@@ -87,6 +91,12 @@ public final class AppleScriptLibraryProvider: @unchecked Sendable {
 
     private static func split(_ section: String) -> [String] {
         section.components(separatedBy: fieldSeparator)
+    }
+
+    /// `nil` for an empty field, so optional metadata round-trips as absent
+    /// rather than as `""`.
+    private static func nonEmpty(_ value: String) -> String? {
+        value.isEmpty ? nil : value
     }
 
     // MARK: - Playlists
@@ -175,6 +185,16 @@ public final class AppleScriptLibraryProvider: @unchecked Sendable {
     	on error
     		set theTrackNumbers to {}
     	end try
+    	try
+    		set theYears to year of every track of library playlist 1
+    	on error
+    		set theYears to {}
+    	end try
+    	try
+    		set theGenres to genre of every track of library playlist 1
+    	on error
+    		set theGenres to {}
+    	end try
     	set AppleScript's text item delimiters to fieldSep
     	set namesText to theNames as string
     	set artistsText to theArtists as string
@@ -184,9 +204,11 @@ public final class AppleScriptLibraryProvider: @unchecked Sendable {
     	set albumArtistsText to theAlbumArtists as string
     	set discNumbersText to theDiscNumbers as string
     	set trackNumbersText to theTrackNumbers as string
+    	set yearsText to theYears as string
+    	set genresText to theGenres as string
     	set AppleScript's text item delimiters to ""
     end tell
-    return namesText & listSep & artistsText & listSep & albumsText & listSep & idsText & listSep & durationsText & listSep & albumArtistsText & listSep & discNumbersText & listSep & trackNumbersText
+    return namesText & listSep & artistsText & listSep & albumsText & listSep & idsText & listSep & durationsText & listSep & albumArtistsText & listSep & discNumbersText & listSep & trackNumbersText & listSep & yearsText & listSep & genresText
     """#
 
     /// Emits `id⟨US⟩secondsAgo⟨RS⟩` for every track that has been played.

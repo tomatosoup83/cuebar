@@ -16,12 +16,13 @@ import Foundation
 public final class AmbientPaletteCoordinator: ObservableObject {
     @Published public private(set) var palette: AlbumPalette?
 
-    private let resolve: (ArtworkSource) async -> AlbumPalette?
+    private let resolve: (ArtworkSource, PaletteStyle) async -> AlbumPalette?
     private let sleep: (Duration) async throws -> Void
     private let delay: Duration
 
     private var isEnabled = false
     private var followsSelection: Bool
+    private var style: PaletteStyle = .classic
     private var nowPlaying: NowPlayingTrack?
     private var selection: PaletteItem?
 
@@ -31,6 +32,9 @@ public final class AmbientPaletteCoordinator: ObservableObject {
     /// burst that ends always land on the row the user stopped on, instead of
     /// leaving whichever colour happened to be resolved last.
     private var published: ArtworkSource?
+    /// The style that produced `published`, so switching theme or an option
+    /// (same artwork, different extraction) forces a fresh resolve.
+    private var publishedStyle: PaletteStyle?
     private var loop: Task<Void, Never>?
     /// Bumped whenever a loop is invalidated, so a superseded loop can never
     /// clear the handle belonging to a newer one.
@@ -41,7 +45,7 @@ public final class AmbientPaletteCoordinator: ObservableObject {
     public init(
         followsSelection: Bool = false,
         delay: Duration = .milliseconds(350),
-        resolve: @escaping (ArtworkSource) async -> AlbumPalette?,
+        resolve: @escaping (ArtworkSource, PaletteStyle) async -> AlbumPalette?,
         sleep: @escaping (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     ) {
         self.followsSelection = followsSelection
@@ -63,6 +67,15 @@ public final class AmbientPaletteCoordinator: ObservableObject {
     public func setFollowsSelection(_ follows: Bool) {
         guard follows != followsSelection else { return }
         followsSelection = follows
+        refresh()
+    }
+
+    /// Chooses the extraction style. Changing it re-resolves even when the
+    /// artwork is unchanged, so an A/B between the Album Art themes — or the
+    /// global-colours option — updates the colour immediately.
+    public func setStyle(_ style: PaletteStyle) {
+        guard style != self.style else { return }
+        self.style = style
         refresh()
     }
 
@@ -112,10 +125,11 @@ public final class AmbientPaletteCoordinator: ObservableObject {
             loop = nil
             hasPausedThisBurst = false
             published = nil
+            publishedStyle = nil
             palette = nil
             return
         }
-        guard target != published else { return }
+        guard target != published || style != publishedStyle else { return }
 
         // Restart the loop rather than letting a resolve for a target the user has
         // already left run to completion first. Resolving an *uncached* album can
@@ -150,20 +164,25 @@ public final class AmbientPaletteCoordinator: ObservableObject {
             // Keep going until what is shown matches what is wanted, so a burst that
             // ends always settles on the row the user stopped on.
             while !Task.isCancelled {
-                guard let want = self.desired, want != self.published else { break }
+                guard let want = self.desired else { break }
+                let wantStyle = self.style
+                guard want != self.published
+                    || wantStyle != self.publishedStyle else { break }
                 let started = Date()
-                let resolved = await self.resolve(want)
+                let resolved = await self.resolve(want, wantStyle)
 #if DEBUG
                 NSLog("Cuebar: resolve \(want.cacheKey) took "
                       + String(format: "%.2fs", Date().timeIntervalSince(started)))
 #endif
                 // Superseded by a newer loop, which owns the state from here.
                 guard !Task.isCancelled else { return }
-                // The selection moved on while we were resolving: drop this result
-                // rather than pairing an album's colour with the wrong row.
-                guard self.desired == want else { continue }
+                // The selection or the theme/option moved on while we were
+                // resolving: drop this result rather than pairing it with the
+                // wrong row.
+                guard self.desired == want, self.style == wantStyle else { continue }
                 self.palette = resolved
                 self.published = want
+                self.publishedStyle = wantStyle
 #if DEBUG
                 NSLog("Cuebar: published \(want.cacheKey)")
 #endif

@@ -30,6 +30,29 @@ public enum WhatsNew {
 
     public static let notes: [Note] = [
         Note(
+            version: "0.8.0",
+            entries: [
+                WhatsNewEntry(
+                    symbolName: "music.mic",
+                    title: "Browse by Artist",
+                    detail: "Type “artist ” to browse artists. Open one for a shuffled "
+                        + "sample of their songs, then filter them as you type."
+                ),
+                WhatsNewEntry(
+                    symbolName: "square.stack",
+                    title: "Open an Album",
+                    detail: "Press ⌘⏎ on an album, or View Album in ⌘K, for its cover "
+                        + "and tracks in album order."
+                ),
+                WhatsNewEntry(
+                    symbolName: "link",
+                    title: "Run From Anywhere",
+                    detail: "The cuebar:// URL scheme runs any command from Raycast, "
+                        + "Shortcuts or a script."
+                )
+            ]
+        ),
+        Note(
             version: "0.7.1",
             entries: [
                 WhatsNewEntry(

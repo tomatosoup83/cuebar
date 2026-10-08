@@ -91,7 +91,24 @@ public struct LibraryAlbumIndex: Sendable {
             album: representative.album,
             durationSeconds: duration > 0 ? duration : nil,
             trackCount: tracks.count,
-            artworkTrackID: representative.persistentID
+            artworkTrackID: representative.persistentID,
+            // Facts for the extended album view. Both come from the album's own
+            // tracks, so a mixed compilation resolves to whichever value is most
+            // common rather than to whichever track happened to come first.
+            year: mostCommon(tracks.map(\.year)),
+            genre: mostCommon(tracks.map(\.genre))
         )
+    }
+
+    /// The most frequent non-nil value, with a deterministic tie-break (the
+    /// lowest value wins) so album rows stay stable across re-indexes.
+    private static func mostCommon<T: Hashable & Comparable>(_ values: [T?]) -> T? {
+        var counts: [T: Int] = [:]
+        for value in values.compactMap({ $0 }) {
+            counts[value, default: 0] += 1
+        }
+        return counts.max { lhs, rhs in
+            lhs.value == rhs.value ? lhs.key > rhs.key : lhs.value < rhs.value
+        }?.key
     }
 }

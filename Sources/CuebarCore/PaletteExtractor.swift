@@ -17,11 +17,56 @@ public struct PixelGrid: Equatable, Sendable {
     public var pixelCount: Int { width * height }
 }
 
+/// One colour cluster from median-cut quantization: the mean colour of the
+/// pixels it holds, how many pixels those are, and their average row (0 = top).
+///
+/// The mean row lets the palette keep its vertical gradient even though the
+/// clusters themselves ignore position.
+public struct ColorCluster: Equatable, Sendable {
+    public let color: ThemeColor
+    public let population: Int
+    public let meanRow: Double
+
+    public init(color: ThemeColor, population: Int, meanRow: Double) {
+        self.color = color
+        self.population = population
+        self.meanRow = meanRow
+    }
+}
+
 /// Turns artwork pixels into a light, legible `AlbumPalette`.
 ///
 /// The extraction is pure and deterministic so it can be unit-tested with
 /// synthetic grids; only `grid(from:)` touches ImageIO/CoreGraphics.
 public enum PaletteExtractor {
+    /// How the three raw base colours are chosen from the artwork.
+    ///
+    /// `classic` averages the top and bottom thirds and picks the most vivid
+    /// 4-bit histogram bucket. `clustered` runs median-cut quantization and
+    /// draws the stops from distinct clusters, which separates multi-hue covers
+    /// that would otherwise collapse into a single accent.
+    ///
+    /// Both feed the same legibility transform (`stop`), so the two modes differ
+    /// only in *which* colour each role starts from.
+    public enum Algorithm: String, CaseIterable, Sendable {
+        case classic
+        case clustered
+    }
+
+    /// How the `clustered` algorithm arranges its two background stops.
+    ///
+    /// Only meaningful for `.clustered`; the classic path always keeps the
+    /// top/bottom-thirds gradient.
+    public enum ClusterLayout: String, CaseIterable, Sendable {
+        /// Upper clusters feed the top stop, lower ones the bottom, so the wash
+        /// follows the cover's vertical structure.
+        case gradient
+        /// Every cluster feeds both stops, ignoring position — a pywal-style
+        /// global colour. The two stops come out identical, so the panel is a
+        /// flat wash rather than a gradient.
+        case global
+    }
+
     /// Tunables for the legibility transform.
     public struct Tuning: Sendable {
         /// Every *light* stop is lifted to at least this luma, so bright covers
@@ -59,6 +104,10 @@ public enum PaletteExtractor {
         /// Artwork below this chroma counts as colourless, and the panel falls
         /// back to plain glass rather than fabricating a tint from noise.
         public var minimumChroma: Double = 0.08
+        /// How many median-cut clusters the `clustered` algorithm extracts.
+        /// Eight is enough to separate the few colours a cover is usually
+        /// "about" without a 24×24 grid over-fragmenting.
+        public var clusterBudget: Int = 8
 
         public init() {}
 
@@ -66,11 +115,18 @@ public enum PaletteExtractor {
     }
 
     /// Returns nil only when there are no usable pixels.
-    public static func palette(from grid: PixelGrid, tuning: Tuning = .default) -> AlbumPalette? {        guard grid.pixelCount > 0, grid.rgb.count >= grid.pixelCount * 3 else { return nil }
+    public static func palette(
+        from grid: PixelGrid,
+        tuning: Tuning = .default,
+        algorithm: Algorithm = .classic,
+        layout: ClusterLayout = .gradient
+    ) -> AlbumPalette? {
+        guard grid.pixelCount > 0, grid.rgb.count >= grid.pixelCount * 3 else { return nil }
 
-        let top = average(grid, rows: 0 ..< max(1, grid.height / 3))
-        let bottom = average(grid, rows: (grid.height * 2 / 3) ..< grid.height)
-        let accent = vibrant(in: grid) ?? top
+        let base = baseColors(from: grid, algorithm: algorithm, layout: layout, tuning: tuning)
+        let top = base.top
+        let bottom = base.bottom
+        let accent = base.accent
 
         // Judged on the *raw* colours, before the legibility transform.
         let coverChroma = max(top.chroma, max(bottom.chroma, accent.chroma))
@@ -151,6 +207,176 @@ public enum PaletteExtractor {
             rgb[index * 3 + 2] = bytes[index * 4 + 2]
         }
         return PixelGrid(width: dimension, height: dimension, rgb: rgb)
+    }
+
+    // MARK: - Base colours
+
+    /// The three raw colours the legibility transform works from.
+    ///
+    /// Kept separate from `palette(from:)` so each algorithm can be checked
+    /// directly, without the transform on top.
+    static func baseColors(
+        from grid: PixelGrid,
+        algorithm: Algorithm,
+        layout: ClusterLayout = .gradient,
+        tuning: Tuning = .default
+    ) -> (top: ThemeColor, bottom: ThemeColor, accent: ThemeColor) {
+        switch algorithm {
+        case .classic:
+            let top = average(grid, rows: 0 ..< max(1, grid.height / 3))
+            let bottom = average(grid, rows: (grid.height * 2 / 3) ..< grid.height)
+            return (top, bottom, vibrant(in: grid) ?? top)
+
+        case .clustered:
+            let clusters = clusters(in: grid, budget: tuning.clusterBudget)
+            guard !clusters.isEmpty else {
+                let top = average(grid, rows: 0 ..< max(1, grid.height / 3))
+                let bottom = average(grid, rows: (grid.height * 2 / 3) ..< grid.height)
+                return (top, bottom, top)
+            }
+
+            let top: ThemeColor
+            let bottom: ThemeColor
+            switch layout {
+            case .gradient:
+                // Keep the vertical structure: upper clusters feed the top stop,
+                // lower ones the bottom. A cluster that straddles the midline (or
+                // a solid cover with a single cluster) falls back to every cluster.
+                let midRow = Double(grid.height) / 2
+                let upper = clusters.filter { $0.meanRow < midRow }
+                let lower = clusters.filter { $0.meanRow >= midRow }
+                top = weightedAverage(upper.isEmpty ? clusters : upper)
+                bottom = weightedAverage(lower.isEmpty ? clusters : lower)
+            case .global:
+                // pywal-style: ignore position, mix every cluster into one colour
+                // used for both stops.
+                let all = weightedAverage(clusters)
+                top = all
+                bottom = all
+            }
+
+            let accent = clusters
+                .max(by: { accentScore($0) < accentScore($1) })?
+                .color ?? top
+            return (top, bottom, accent)
+        }
+    }
+
+    /// Population-weighted mean of a set of clusters.
+    private static func weightedAverage(_ clusters: [ColorCluster]) -> ThemeColor {
+        var red = 0.0
+        var green = 0.0
+        var blue = 0.0
+        var total = 0
+        for cluster in clusters {
+            let weight = Double(cluster.population)
+            red += cluster.color.red * weight
+            green += cluster.color.green * weight
+            blue += cluster.color.blue * weight
+            total += cluster.population
+        }
+        guard total > 0 else { return .neutral }
+        let divisor = Double(total)
+        return ThemeColor(red: red / divisor, green: green / divisor, blue: blue / divisor)
+    }
+
+    /// The accent prefers the colour the cover is "about": vivid and well
+    /// populated — the same trade-off `vibrant(in:)` makes for the classic path.
+    private static func accentScore(_ cluster: ColorCluster) -> Double {
+        cluster.color.chroma * Double(cluster.population)
+    }
+
+    // MARK: - Median cut
+
+    /// Median-cut quantization of the grid into at most `budget` clusters.
+    ///
+    /// Deterministic and dependency-free: repeatedly split the box with the
+    /// widest channel range at its median. That is ample for a 24×24 cover and a
+    /// handful of clusters, and it separates distinct hues that a single
+    /// histogram bucket would merge.
+    static func clusters(in grid: PixelGrid, budget: Int = 8) -> [ColorCluster] {
+        let pixelCount = grid.pixelCount
+        guard pixelCount > 0, budget > 0, grid.rgb.count >= pixelCount * 3 else { return [] }
+
+        // Indices, not colours, so a partition can reorder a sub-range in place.
+        var indices = Array(0 ..< pixelCount)
+
+        func value(_ index: Int, _ channel: Int) -> UInt8 {
+            grid.rgb[index * 3 + channel]
+        }
+
+        func channelSpans(_ start: Int, _ end: Int) -> (red: Int, green: Int, blue: Int) {
+            var low = (r: UInt8.max, g: UInt8.max, b: UInt8.max)
+            var high = (r: UInt8.min, g: UInt8.min, b: UInt8.min)
+            for i in start ..< end {
+                let r = value(i, 0)
+                let g = value(i, 1)
+                let b = value(i, 2)
+                low.r = min(low.r, r)
+                high.r = max(high.r, r)
+                low.g = min(low.g, g)
+                high.g = max(high.g, g)
+                low.b = min(low.b, b)
+                high.b = max(high.b, b)
+            }
+            return (
+                Int(high.r) - Int(low.r),
+                Int(high.g) - Int(low.g),
+                Int(high.b) - Int(low.b)
+            )
+        }
+
+        var boxes: [(start: Int, end: Int)] = [(0, pixelCount)]
+
+        while boxes.count < budget {
+            var chosen = -1
+            var chosenChannel = 0
+            var chosenSpan = 0
+            for (index, box) in boxes.enumerated() where box.end - box.start > 1 {
+                let spans = channelSpans(box.start, box.end)
+                // First widest channel wins, so ties are deterministic.
+                var span = spans.red
+                var channel = 0
+                if spans.green > span { span = spans.green; channel = 1 }
+                if spans.blue > span { span = spans.blue; channel = 2 }
+                if span > chosenSpan {
+                    chosenSpan = span
+                    chosen = index
+                    chosenChannel = channel
+                }
+            }
+            guard chosen >= 0, chosenSpan > 0 else { break }
+
+            let box = boxes[chosen]
+            indices[box.start ..< box.end].sort {
+                value($0, chosenChannel) < value($1, chosenChannel)
+            }
+            let mid = box.start + (box.end - box.start) / 2
+            boxes[chosen] = (box.start, mid)
+            boxes.append((mid, box.end))
+        }
+
+        return boxes.compactMap { box in
+            let count = box.end - box.start
+            guard count > 0 else { return nil }
+            var red = 0.0
+            var green = 0.0
+            var blue = 0.0
+            var rowSum = 0.0
+            for position in box.start ..< box.end {
+                let index = indices[position]
+                red += Double(value(index, 0)) / 255
+                green += Double(value(index, 1)) / 255
+                blue += Double(value(index, 2)) / 255
+                rowSum += Double(index / grid.width)
+            }
+            let divisor = Double(count)
+            return ColorCluster(
+                color: ThemeColor(red: red / divisor, green: green / divisor, blue: blue / divisor),
+                population: count,
+                meanRow: rowSum / divisor
+            )
+        }
     }
 
     // MARK: - Internals
@@ -270,6 +496,35 @@ public enum PaletteExtractor {
 
         return best
     }
+}
+
+/// A complete extraction recipe: which algorithm, and how the clustered one lays
+/// out its stops.
+///
+/// `Hashable` so it can key the palette cache and stand in for the ambient
+/// coordinator's identity check — switching either part must re-resolve the
+/// same artwork.
+public struct PaletteStyle: Hashable, Sendable {
+    public let algorithm: PaletteExtractor.Algorithm
+    public let clusterLayout: PaletteExtractor.ClusterLayout
+
+    public init(
+        algorithm: PaletteExtractor.Algorithm,
+        clusterLayout: PaletteExtractor.ClusterLayout = .gradient
+    ) {
+        self.algorithm = algorithm
+        self.clusterLayout = clusterLayout
+    }
+
+    /// The original Album Art extraction.
+    public static let classic = PaletteStyle(algorithm: .classic)
+    /// Clustered, keeping the vertical gradient.
+    public static let clustered = PaletteStyle(algorithm: .clustered)
+    /// Clustered, pywal-style global colour (no gradient).
+    public static let clusteredGlobal = PaletteStyle(algorithm: .clustered, clusterLayout: .global)
+
+    /// Stable identity for caches and comparisons.
+    public var key: String { "\(algorithm.rawValue):\(clusterLayout.rawValue)" }
 }
 
 extension NSImage {
